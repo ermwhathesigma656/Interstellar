@@ -7,3 +7,5 @@ build
 .hintrc
 .gitpod.yml 
 .env
+.wrangler
+.dev.vars*

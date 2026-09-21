@@ -27,6 +27,18 @@
 
 ## Deployment
 
+### Cloudflare Workers
+
+This fork includes a Workers adapter. Connect this repository in Workers Builds and
+use `npx wrangler deploy` as the deploy command. Leave the dashboard build command
+empty; `wrangler.jsonc` runs the existing build and bundles the Worker automatically.
+No Containers or paid bindings are required. To test locally, run `pnpm preview`,
+then `pnpm test:worker` in another terminal.
+
+Workers Free quotas still apply. The proxy uses Cloudflare TCP sockets, so UDP and
+destinations blocked by [Cloudflare's TCP restrictions](https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/#considerations)
+are unavailable. Local settings and the standard Node deployment remain supported.
+
 > [!IMPORTANT]
 > You **cannot** deploy to static web hosts, including Netlify, Cloudflare Pages, and GitHub Pages.
 

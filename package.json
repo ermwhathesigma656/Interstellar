@@ -9,6 +9,9 @@
   "scripts": {
     "start": "node src/server.js",
     "build": "node src/build.js",
+    "deploy": "wrangler deploy",
+    "preview": "wrangler dev",
+    "test:worker": "node src/check-worker.js",
     "format": "pnpm biome format --write .",
     "precommit": "pnpm run format && pnpm biome check --write .",
     "lint": "biome lint --write ."
@@ -34,8 +37,10 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.2.2",
+    "esbuild": "0.28.1",
     "javascript-obfuscator": "^4.1.1",
-    "terser": "^5.36.0"
+    "terser": "^5.36.0",
+    "wrangler": "4.135.0"
   },
   "packageManager": "pnpm@10.33.0+sha512.10568bb4a6afb58c9eb3630da90cc9516417abebd3fabbe6739f0ae795728da1491e9db5a544c76ad8eb7570f5c4bb3d6c637b2cb41bfdcdb47fa823c8649319",
   "pnpm": {
