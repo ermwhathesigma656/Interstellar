@@ -32,18 +32,23 @@
 This fork includes a Workers adapter. Connect this repository in Workers Builds and
 use `npx wrangler deploy` as the deploy command. Leave the dashboard build command
 empty; `wrangler.jsonc` runs the existing build and bundles the Worker automatically.
-No Containers or paid bindings are required. To test locally, run `pnpm preview`,
+No Containers or paid plan is required. To test locally, run `pnpm preview`,
 then `pnpm test:worker` in another terminal.
 
 Workers automatically uses its native HTTP and WebSocket APIs for browsing instead
-of restricted TCP sockets. Some sites reject requests from Workers anyway: Discord's
-homepage and gateway load, but its app scripts currently return `Bad Worker Origin`.
-Full Discord access requires a separate Wisp server outside Workers, entered in
-Settings. Custom Wisp URLs use the selected Epoxy/libcurl transport. Workers Free
-quotas and destination websites' own restrictions still apply; UDP is unavailable.
+of restricted TCP sockets. Discord's public app files use Cloudflare Browser Run
+when Discord rejects ordinary Worker requests. A SQLite Durable Object saves these
+files for seven days and shares one browser across concurrent requests. Account
+traffic and WebSockets continue through the regular transport; credentials are
+never forwarded to the shared browser or stored in the asset cache. Browsers close
+after eight idle seconds. This stays entirely on Cloudflare's free products, subject
+to their daily quotas, including Browser Run's 10 minutes per day. Existing cached
+files remain available when that allowance runs out. Other destination websites'
+restrictions still apply; UDP is unavailable. Custom Wisp URLs use the selected
+Epoxy/libcurl transport.
 Local settings and the standard Node deployment remain supported.
-`pnpm test:worker` checks an actual Discord app script as well as its login HTML,
-so this upstream restriction is reported as a failed compatibility check.
+`pnpm test:worker` checks Discord app scripts against their original bytes, checks
+the saved copies, and tests the login HTML, API, and gateway connection.
 
 > [!IMPORTANT]
 > You **cannot** deploy to static web hosts, including Netlify, Cloudflare Pages, and GitHub Pages.

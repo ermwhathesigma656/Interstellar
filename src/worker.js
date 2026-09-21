@@ -7,7 +7,7 @@ import config from "../config.js";
 import manifest from "../dist/.runtime/vendor-map.cjs";
 import { mountAnalytics } from "./analytics.js";
 import { proxyHTTP } from "./worker-http.js";
-import puppeteer from "@cloudflare/puppeteer";
+export { DiscordAssets } from "./discord-assets.js";
 
 // Use the package's Node entry so its network filters remain available.
 const { server: wisp } = require("@mercuryworkshop/wisp-js/server");
@@ -111,28 +111,7 @@ export default {
       });
     }
     const url = new URL(request.url);
-    // Temporary deployment check; removed once the Cloudflare browser path is verified.
-    if (url.pathname === "/browser-check") {
-      const cacheKey = new Request(url.origin + "/browser-check");
-      const cached = await caches.default.match(cacheKey);
-      if (cached) return cached;
-      let browser, result;
-      try {
-        browser = await puppeteer.launch(env.BROWSER);
-        const page = await browser.newPage();
-        const asset = await page.goto("https://discord.com/assets/533077.aaffa7a528706cc2.js", { waitUntil: "domcontentloaded", timeout: 15000 });
-        const body = await asset.text();
-        result = { status: asset.status(), type: asset.headers()["content-type"], bytes: body.length, start: body.slice(0, 100) };
-      } catch (error) {
-        result = { error: error.message };
-      } finally {
-        await browser?.close();
-      }
-      const response = Response.json(result, { headers: { "Cache-Control": "public, max-age=86400" } });
-      await caches.default.put(cacheKey, response.clone());
-      return response;
-    }
-    if (url.pathname === "/http/") return proxyHTTP(request);
+    if (url.pathname === "/http/") return proxyHTTP(request, env);
     if (url.pathname === "/worker-transport.json") return Response.json({ transport: "/worker-transport.mjs?v=1" });
     if (url.pathname === "/wisp/") return upgradeWisp(request);
     if (url.pathname.startsWith("/.runtime")) return new Response("Not found", { status: 404 });

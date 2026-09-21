@@ -1,4 +1,5 @@
 import { isIP } from "node:net";
+import { discordAssetURL } from "./discord-assets.js";
 
 function destination(value, origin, protocols) {
   const url = new URL(value);
@@ -64,7 +65,7 @@ function websocket(request) {
   return new Response(null, { status: 101, webSocket: client });
 }
 
-export async function proxyHTTP(request) {
+export async function proxyHTTP(request, env) {
   const origin = request.headers.get("Origin");
   if ((origin && origin !== new URL(request.url).origin) || request.headers.get("Sec-Fetch-Site") === "cross-site") {
     return new Response("Cross-origin proxy requests are not allowed", { status: 403 });
@@ -81,7 +82,8 @@ export async function proxyHTTP(request) {
     return new Response(error.message, { status: 400 });
   }
   try {
-    const response = await fetch(url, {
+    const asset = env.DISCORD_ASSETS && ["GET", "HEAD"].includes(method) && discordAssetURL(url);
+    const response = asset ? await env.DISCORD_ASSETS.getByName("public-assets").fetch(new Request(asset, { method })) : await fetch(url, {
       method, headers, redirect: "manual", signal: request.signal,
       body: ["GET", "HEAD"].includes(method) ? null : request.body,
     });

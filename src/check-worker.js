@@ -5,9 +5,10 @@ import { connect as connectTLS } from "node:tls";
 import { client, packet } from "@mercuryworkshop/wisp-js/client";
 import manifest from "../dist/.runtime/vendor-map.cjs";
 import WorkerTransport from "../static/worker-transport.mjs";
+import { createHash } from "node:crypto";
 
 const base = process.argv[2] ?? "http://127.0.0.1:8787";
-const deadline = setTimeout(() => { console.error("Worker check timed out"); process.exit(1); }, 45000);
+const deadline = setTimeout(() => { console.error("Worker check timed out"); process.exit(1); }, 90000);
 const paths = ["/", "/apps", "/games", "/settings", "/tabs", "/play.html"];
 if (!process.argv[2]) paths.push(...Object.values(manifest.routes));
 for (const path of paths) {
@@ -43,11 +44,21 @@ for (const address of ["https://discord.com/login", "https://discord.com/api/v9/
   const body = await new Response(response.body).text();
   assert.match(body, /discord/i);
   if (address.endsWith("/login")) {
-    const script = body.match(/<script[^>]*src="([^\"]+\.js)"/);
-    assert.ok(script, "Discord login must contain an app script");
-    const asset = await native.request(new URL(script[1], address), "GET", null, {}, undefined);
-    const source = await new Response(asset.body).text();
-    if (asset.status !== 200) discordAppError = `Discord app script: HTTP ${asset.status} ${source.slice(0,120)}`;
+    const scripts = Array.from(body.matchAll(/<script[^>]*src="([^\"]+\.js)"/g), match => match[1]);
+    assert.ok(scripts.length, "Discord login must contain app scripts");
+    for (const path of [scripts[0], scripts.at(-1)]) {
+      const url = new URL(path, address);
+      const asset = await native.request(url, "GET", null, {}, undefined);
+      const bytes = Buffer.from(await new Response(asset.body).arrayBuffer());
+      if (asset.status !== 200) { discordAppError = `Discord app script: HTTP ${asset.status} ${bytes.toString().slice(0,120)}`; continue; }
+      const expected = Buffer.from(await (await fetch(url)).arrayBuffer());
+      const hash = data => createHash("sha256").update(data).digest("hex");
+      assert.equal(hash(bytes), hash(expected), "Discord script must match the original bytes");
+      const cached = await native.request(url, "GET", null, {}, undefined);
+      assert.equal(cached.headers["x-asset-cache"], "hit", "Repeated public assets must use Cloudflare storage");
+      assert.equal(hash(Buffer.from(await new Response(cached.body).arrayBuffer())), hash(bytes), "Cached script must remain intact");
+      console.log(`Discord asset: ${bytes.length} bytes, original and cached copies verified`);
+    }
   }
 }
 for (const address of ["https://127.0.0.1/", "https://[::1]/", "https://localhost/", base + "/", "file:///etc/passwd"]) {
