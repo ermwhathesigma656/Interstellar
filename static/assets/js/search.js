@@ -183,7 +183,17 @@ function isValidUrl(val = "") {
 
     const wisp = getWispUrl();
     const connection = new BareMuxConnection(vendor.baremuxWorker);
-    if (store.get("transport") === "libcurl") {
+    let workerTransport;
+    if (!store.get("wisp-url")?.trim()) {
+      try {
+        const response = await fetch("/worker-transport.json");
+        if (response.ok) workerTransport = (await response.json()).transport;
+      } catch {}
+    }
+    if (workerTransport) {
+      const endpoint = `${location.origin}/http/`;
+      await ensureTransport(connection, workerTransport, [endpoint], `${workerTransport}|${endpoint}`);
+    } else if (store.get("transport") === "libcurl") {
       await ensureTransport(connection, vendor.libcurl, [{ websocket: wisp }], `${vendor.libcurl}|${wisp}`);
     } else {
       await ensureTransport(connection, vendor.epoxy, [{ wisp }], `${vendor.epoxy}|${wisp}`);

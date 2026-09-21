@@ -35,9 +35,11 @@ empty; `wrangler.jsonc` runs the existing build and bundles the Worker automatic
 No Containers or paid bindings are required. To test locally, run `pnpm preview`,
 then `pnpm test:worker` in another terminal.
 
-Workers Free quotas still apply. The proxy uses Cloudflare TCP sockets, so UDP and
-destinations blocked by [Cloudflare's TCP restrictions](https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/#considerations)
-are unavailable. Local settings and the standard Node deployment remain supported.
+Workers automatically uses its native HTTP and WebSocket APIs for browsing, so
+Cloudflare-hosted websites such as Discord do not depend on restricted TCP sockets.
+Custom Wisp URLs still use the selected Epoxy/libcurl transport. Workers Free quotas
+and destination websites' own restrictions still apply; UDP is unavailable.
+Local settings and the standard Node deployment remain supported.
 
 > [!IMPORTANT]
 > You **cannot** deploy to static web hosts, including Netlify, Cloudflare Pages, and GitHub Pages.

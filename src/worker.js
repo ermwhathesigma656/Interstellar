@@ -6,6 +6,7 @@ import basicAuth from "express-basic-auth";
 import config from "../config.js";
 import manifest from "../dist/.runtime/vendor-map.cjs";
 import { mountAnalytics } from "./analytics.js";
+import { proxyHTTP } from "./worker-http.js";
 
 // Use the package's Node entry so its network filters remain available.
 const { server: wisp } = require("@mercuryworkshop/wisp-js/server");
@@ -109,6 +110,8 @@ export default {
       });
     }
     const url = new URL(request.url);
+    if (url.pathname === "/http/") return proxyHTTP(request);
+    if (url.pathname === "/worker-transport.json") return Response.json({ transport: "/worker-transport.mjs?v=1" });
     if (url.pathname === "/wisp/") return upgradeWisp(request);
     if (url.pathname.startsWith("/.runtime")) return new Response("Not found", { status: 404 });
     if (url.pathname.startsWith("/gh-games/") ||

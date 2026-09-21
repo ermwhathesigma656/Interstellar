@@ -4,6 +4,7 @@ import { Duplex } from "node:stream";
 import { connect as connectTLS } from "node:tls";
 import { client, packet } from "@mercuryworkshop/wisp-js/client";
 import manifest from "../dist/.runtime/vendor-map.cjs";
+import WorkerTransport from "../static/worker-transport.mjs";
 
 const base = process.argv[2] ?? "http://127.0.0.1:8787";
 const deadline = setTimeout(() => { console.error("Worker check timed out"); process.exit(1); }, 45000);
@@ -31,6 +32,31 @@ await Promise.all(["/gh-games/4/games/1/index.html", "/gh-games/2/Cluster-Rush/i
   assert.equal(response.status, 200, path);
   assert.match(await response.text(), /<html/i, path);
 }));
+
+const workerConfig = await (await fetch(base + "/worker-transport.json")).json();
+assert.match(workerConfig.transport, /^\/worker-transport\.mjs\?/);
+const native = new WorkerTransport(base + "/http/");
+for (const address of ["https://discord.com/login", "https://discord.com/api/v9/gateway"]) {
+  const response = await native.request(new URL(address), "GET", null, {}, undefined);
+  assert.equal(response.status, 200, address);
+  assert.match(await new Response(response.body).text(), /discord/i);
+}
+for (const address of ["https://127.0.0.1/", "https://[::1]/", "https://localhost/", base + "/", "file:///etc/passwd"]) {
+  await assert.rejects(native.request(new URL(address), "GET", null, {}, undefined), /Destination is not a public website/);
+}
+const crossOrigin = await fetch(base + "/http/", { method: "POST", headers: { Origin: "https://unrelated.example" } });
+assert.equal(crossOrigin.status, 403);
+await crossOrigin.body.cancel();
+await new Promise((resolve, reject) => {
+  const [, close] = native.connect(new URL("wss://gateway.discord.gg/?v=9&encoding=json"), [], {}, () => {}, data => {
+    try {
+      assert.equal(JSON.parse(data).op, 10, "Discord gateway hello");
+      close(1000, "Test complete");
+      resolve();
+    } catch (error) { reject(error); }
+  }, (code, reason) => { if (code !== 1000) reject(new Error(`Gateway closed: ${code} ${reason}`)); }, reject);
+});
+console.log("Native HTTP: Discord login, API, gateway, and destination/origin protection passed");
 
 for (const version of [1, 2]) {
   const connection = new client.ClientConnection(base.replace(/^http/, "ws") + "/wisp/", { wisp_version: version });
