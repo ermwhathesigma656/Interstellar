@@ -174,7 +174,7 @@ const URL_CODEC_NAMES = ["xor"];
 
 const URL_CODEC_FUNCTIONS = {
   xor: {
-    encode: 'url => url && encodeURIComponent(url.split("").map((char, index) => (index % 2 ? String.fromCharCode(char.charCodeAt(0) ^ 2) : char)).join(""))',
+    encode: 'url => url && encodeURIComponent(url.split("").map((char, index) => (index % 2 ? String.fromCharCode(char.charCodeAt(0) ^ 2) : char)).join("")).replace(/[!\\x27()*]/g, char => "%" + char.charCodeAt(0).toString(16))',
     decode:
       'url => { if (!url) return url; const index = url.search(/[?#]/); const value = index < 0 ? url : url.slice(0, index); const tail = index < 0 ? "" : url.slice(index); return decodeURIComponent(value).split("").map((char, index) => (index % 2 ? String.fromCharCode(char.charCodeAt(0) ^ 2) : char)).join("") + tail; }',
   },
@@ -208,7 +208,8 @@ function createXorCodec(key) {
   if (!key) return URL_CODEC_FUNCTIONS.xor;
 
   const encodedKey = xorKeyValue(key);
-  const encodeValue = `(url => encodeURIComponent(url.split("").map((char, index) => (index % ${encodedKey} ? String.fromCharCode(char.charCodeAt(0) ^ ${encodedKey}) : char)).join("")))`;
+  // encodeURIComponent leaves quotes/parentheses that break rewritten CSS url(...).
+  const encodeValue = `(url => encodeURIComponent(url.split("").map((char, index) => (index % ${encodedKey} ? String.fromCharCode(char.charCodeAt(0) ^ ${encodedKey}) : char)).join("")).replace(/[!\\x27()*]/g, char => "%" + char.charCodeAt(0).toString(16)))`;
   const decodeValue = `(url => decodeURIComponent(url).split("").map((char, index) => (index % ${encodedKey} ? String.fromCharCode(char.charCodeAt(0) ^ ${encodedKey}) : char)).join(""))`;
   return {
     encode: `url => url && ${encodeValue}(url)`,
@@ -1246,6 +1247,14 @@ function formatKb(bytes) {
 async function verifyBuild({ manifest, specs, emitted, references, distJsFiles, serverRoutes = [], identifierRenames = new Map(), swLocalRenames = new Map() }) {
   const failures = [];
   const emittedPaths = new Set([...emitted.keys(), ...serverRoutes]);
+  for (const key of ["", ...Array.from({ length: 30 }, (_, index) => String(index + 2))]) {
+    const codec = createXorCodec(key);
+    const encode = Function(`return (${codec.encode})`)();
+    const decode = Function(`return (${codec.decode})`)();
+    const url = "https://example.com/assets/font(a)'s.woff2?q=!*#fragment";
+    const encoded = encode(url);
+    if (/[!'()*\s]/.test(encoded) || decode(encoded) !== url) failures.push(`URL codec ${key || "default"} must round-trip safely inside CSS url(...)`);
+  }
 
   for (const [id, publicPath] of Object.entries(manifest.vendor)) {
     const full = path.join(DIST_DIR, publicPath);

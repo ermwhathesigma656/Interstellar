@@ -1,7 +1,7 @@
 self.__scramjet$config = {
   prefix: "/uv/scramjet/",
   codec: {
-    encode: url => url && encodeURIComponent(url),
+    encode: url => url && encodeURIComponent(url).replace(/[!'()*]/g, char => "%" + char.charCodeAt(0).toString(16)),
     decode: url => url && decodeURIComponent(url),
   },
   files: {

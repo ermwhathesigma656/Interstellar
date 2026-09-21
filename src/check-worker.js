@@ -116,5 +116,5 @@ for (const version of [1, 2]) {
   }
 }
 clearTimeout(deadline);
-console.log("Worker infrastructure checks passed; checking full Discord app compatibility.");
-assert.equal(discordAppError, undefined, "Full Discord app compatibility check");
+assert.equal(discordAppError, undefined, "Discord app asset compatibility check");
+console.log("Worker infrastructure and Discord app asset checks passed.");
