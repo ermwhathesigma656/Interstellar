@@ -4,7 +4,7 @@
   "main": "dist/.runtime/worker.mjs",
   "no_bundle": true,
   "compatibility_date": "2026-09-18",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "build": { "command": "npm run build && node src/bundle-worker.js" },
   "assets": {
     "directory": "./dist",
