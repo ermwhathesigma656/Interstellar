@@ -36,10 +36,19 @@ await Promise.all(["/gh-games/4/games/1/index.html", "/gh-games/2/Cluster-Rush/i
 const workerConfig = await (await fetch(base + "/worker-transport.json")).json();
 assert.match(workerConfig.transport, /^\/worker-transport\.mjs\?/);
 const native = new WorkerTransport(base + "/http/");
+let discordAppError;
 for (const address of ["https://discord.com/login", "https://discord.com/api/v9/gateway"]) {
   const response = await native.request(new URL(address), "GET", null, {}, undefined);
   assert.equal(response.status, 200, address);
-  assert.match(await new Response(response.body).text(), /discord/i);
+  const body = await new Response(response.body).text();
+  assert.match(body, /discord/i);
+  if (address.endsWith("/login")) {
+    const script = body.match(/<script[^>]*src="([^\"]+\.js)"/);
+    assert.ok(script, "Discord login must contain an app script");
+    const asset = await native.request(new URL(script[1], address), "GET", null, {}, undefined);
+    const source = await new Response(asset.body).text();
+    if (asset.status !== 200) discordAppError = `Discord app script: HTTP ${asset.status} ${source.slice(0,120)}`;
+  }
 }
 for (const address of ["https://127.0.0.1/", "https://[::1]/", "https://localhost/", base + "/", "file:///etc/passwd"]) {
   await assert.rejects(native.request(new URL(address), "GET", null, {}, undefined), /Destination is not a public website/);
@@ -56,7 +65,7 @@ await new Promise((resolve, reject) => {
     } catch (error) { reject(error); }
   }, (code, reason) => { if (code !== 1000) reject(new Error(`Gateway closed: ${code} ${reason}`)); }, reject);
 });
-console.log("Native HTTP: Discord login, API, gateway, and destination/origin protection passed");
+console.log("Native HTTP: Discord login HTML, API, gateway, and destination/origin protection passed");
 
 for (const version of [1, 2]) {
   const connection = new client.ClientConnection(base.replace(/^http/, "ws") + "/wisp/", { wisp_version: version });
@@ -96,4 +105,5 @@ for (const version of [1, 2]) {
   }
 }
 clearTimeout(deadline);
-console.log("Worker pages, generated routes, service worker headers, and proxy checks passed.");
+console.log("Worker infrastructure checks passed; checking full Discord app compatibility.");
+assert.equal(discordAppError, undefined, "Full Discord app compatibility check");

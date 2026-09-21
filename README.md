@@ -35,11 +35,15 @@ empty; `wrangler.jsonc` runs the existing build and bundles the Worker automatic
 No Containers or paid bindings are required. To test locally, run `pnpm preview`,
 then `pnpm test:worker` in another terminal.
 
-Workers automatically uses its native HTTP and WebSocket APIs for browsing, so
-Cloudflare-hosted websites such as Discord do not depend on restricted TCP sockets.
-Custom Wisp URLs still use the selected Epoxy/libcurl transport. Workers Free quotas
-and destination websites' own restrictions still apply; UDP is unavailable.
+Workers automatically uses its native HTTP and WebSocket APIs for browsing instead
+of restricted TCP sockets. Some sites reject requests from Workers anyway: Discord's
+homepage and gateway load, but its app scripts currently return `Bad Worker Origin`.
+Full Discord access requires a separate Wisp server outside Workers, entered in
+Settings. Custom Wisp URLs use the selected Epoxy/libcurl transport. Workers Free
+quotas and destination websites' own restrictions still apply; UDP is unavailable.
 Local settings and the standard Node deployment remain supported.
+`pnpm test:worker` checks an actual Discord app script as well as its login HTML,
+so this upstream restriction is reported as a failed compatibility check.
 
 > [!IMPORTANT]
 > You **cannot** deploy to static web hosts, including Netlify, Cloudflare Pages, and GitHub Pages.
