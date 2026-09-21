@@ -37,6 +37,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.2.2",
+    "@cloudflare/puppeteer": "1.4.0",
     "esbuild": "0.28.1",
     "javascript-obfuscator": "^4.1.1",
     "terser": "^5.36.0",

@@ -5,6 +5,7 @@
   "no_bundle": true,
   "compatibility_date": "2026-09-18",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "browser": { "binding": "BROWSER" },
   "build": { "command": "npm run build && node src/bundle-worker.js" },
   "assets": {
     "directory": "./dist",
