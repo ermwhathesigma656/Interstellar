@@ -50,7 +50,7 @@ if (!inFrame && !navigator.userAgent.includes("Firefox") && store.get("ab") === 
 }
 
 // Splash texts
-const SplashT = ["Hello T3", "Hello Mr I"];
+const SplashT = ["Hello T3", "Mr I is a pedo", "I like Vanilla", "Hi"];
 
 let SplashI = Math.floor(Math.random() * SplashT.length);
 const SplashE = document.getElementById("splash");
