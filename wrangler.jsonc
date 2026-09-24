@@ -6,6 +6,7 @@
   "compatibility_date": "2026-09-18",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "browser": { "binding": "BROWSER" },
+  "ratelimits": [{ "name": "AI_RATE_LIMITER", "namespace_id": "20260924", "simple": { "limit": 10, "period": 60 } }],
   "durable_objects": { "bindings": [{ "name": "DISCORD_ASSETS", "class_name": "DiscordAssets" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DiscordAssets"] }],
   "build": { "command": "npm run build && node src/bundle-worker.js" },

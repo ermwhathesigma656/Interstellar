@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="referrer" content="no-referrer" />
+  <link rel="shortcut icon" id="tab-favicon" href="favicon.png" />
+  <title id="t">Interstellar AI</title>
+  <link rel="stylesheet" id="global" href="/assets/css/global.css" />
+  <link rel="stylesheet" href="/assets/css/nav.css" />
+  <link rel="stylesheet" href="/assets/css/ai.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+  <script src="/assets/js/storage.js"></script>
+  <script src="/assets/js/main.js"></script>
+  <script src="/assets/js/ai.js" defer></script>
+</head>
+<body>
+  <nav class="nav-bar" aria-label="Main navigation"></nav>
+  <main class="ai-shell">
+    <header class="ai-heading">
+      <div><h1>Interstellar AI</h1><p>Ask a question. Bring an image. Keep the conversation going.</p></div>
+      <button id="ai-new" type="button">New chat</button>
+    </header>
+    <section id="ai-messages" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions">
+      <div id="ai-welcome"><i class="fa-solid fa-comment-dots" aria-hidden="true"></i><h2>What are you curious about?</h2><p>I can explain an idea, help with code, or take a look at your images.</p></div>
+    </section>
+    <form id="ai-form" class="ai-composer">
+      <div id="ai-attachments" aria-label="Attached images"></div>
+      <label class="ai-label" for="ai-input">Your message</label>
+      <textarea id="ai-input" rows="3" maxlength="6000" placeholder="Ask anything, or upload an image…" aria-describedby="ai-help"></textarea>
+      <div class="ai-actions">
+        <div><button id="ai-upload" type="button"><i class="fa-solid fa-image" aria-hidden="true"></i> Add images</button><input id="ai-files" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden /></div>
+        <div><button id="ai-stop" type="button" hidden>Stop</button><button id="ai-send" type="submit">Send <i class="fa-solid fa-arrow-up" aria-hidden="true"></i></button></div>
+      </div>
+      <p id="ai-status" role="status" aria-live="polite"></p>
+    </form>
+    <p id="ai-help" class="ai-footnote">Enter to send · Shift + Enter for a new line · Up to 3 images, 10 MB each</p>
+    <p class="ai-footnote">Messages and images are sent to Groq. AI can make mistakes. This chat clears when you leave.</p>
+  </main>
+</body>
+</html>

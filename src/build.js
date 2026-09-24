@@ -687,7 +687,7 @@ function applyProxyChoiceValues(source) {
 // server, and rewrites the clean route literals in the application JS so the navbar and every
 // in-app navigation point at the same opaque paths. "/" (root) and "/play.html" (a compatibility
 // alias for the games page) are deliberately left clean and are not part of this map.
-const PAGE_ROUTES = ["/apps", "/games", "/tabs", "/settings"];
+const PAGE_ROUTES = ["/apps", "/games", "/tabs", "/settings", "/ai"];
 
 function createPageRoutes(registry) {
   const map = {};
@@ -713,13 +713,14 @@ function routeRewriteTable(routes) {
     [`"/./games"`, `"${routes["/games"]}"`],
     [`"/./apps"`, `"${routes["/apps"]}"`],
     [`"/./settings"`, `"${routes["/settings"]}"`],
+    [`"/./ai"`, `"${routes["/ai"]}"`],
     [`"/games"`, `"${routes["/games"]}"`],
     [`"/apps"`, `"${routes["/apps"]}"`],
     [`"/tabs"`, `"${routes["/tabs"]}"`],
     [`"tabs"`, `"${routes["/tabs"]}"`],
   ];
 }
-const ROUTE_REWRITE_COUNT = 11;
+const ROUTE_REWRITE_COUNT = 12;
 
 function applyRouteRewrites(source, table) {
   let count = 0;
@@ -1497,7 +1498,9 @@ function transformMarkupAttrs(text, fn) {
           .map(token => (token.trim() ? fn("class", token) : token))
           .join("")}${quote}`,
     )
-    .replace(/(\sid\s*=\s*)(["'])([^"']*)\2/gi, (_m, lead, quote, value) => `${lead}${quote}${value.trim() ? fn("id", value.trim()) : value}${quote}`);
+    .replace(/(\sid\s*=\s*)(["'])([^"']*)\2/gi, (_m, lead, quote, value) => `${lead}${quote}${value.trim() ? fn("id", value.trim()) : value}${quote}`)
+    .replace(/(\s(?:for|aria-labelledby|aria-describedby)\s*=\s*)(["'])([^"']*)\2/gi, (_m, lead, quote, value) =>
+      `${lead}${quote}${value.split(/(\s+)/).map(token => token.trim() ? fn("id", token) : token).join("")}${quote}`);
 }
 
 // Quotes stay inside the class, or `.column[data-x="${i}"]` never matches.

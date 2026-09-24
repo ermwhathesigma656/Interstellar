@@ -50,6 +50,19 @@ Local settings and the standard Node deployment remain supported.
 `pnpm test:worker` checks Discord app scripts against their original bytes, checks
 the saved copies, and tests the login HTML, API, and gateway connection.
 
+The **AI** tab supports text conversations and JPEG, PNG, or WebP uploads through
+Groq's `qwen/qwen3.8-27b` vision model. On Cloudflare, add `GROQ_API_KEY` as a
+**Secret** under the Worker's Settings → Variables and Secrets, or run
+`npx wrangler secret put GROQ_API_KEY`. Never put the key in `static/` or Git.
+For local Workers development, put `GROQ_API_KEY="your-key"` in the ignored
+`.dev.vars` file beside the Wrangler config. Run `npm run test:ai` for the API checks.
+This endpoint runs on the Workers deployment, not the optional Node server.
+Chats stay in the current tab and send recent context plus up to three images to
+Groq. Uploads are resized before sending; no chat database is used. Requests are
+limited to ten per minute per IP at each Cloudflare location, plus Groq's account
+limits. These are best-effort abuse limits, not a billing cap. The Groq model is
+a preview model and may need updating when Groq retires it.
+
 > [!IMPORTANT]
 > You **cannot** deploy to static web hosts, including Netlify, Cloudflare Pages, and GitHub Pages.
 

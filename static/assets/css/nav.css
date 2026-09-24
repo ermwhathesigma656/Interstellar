@@ -151,7 +151,9 @@ img {
       display: inline;
    }
    .nav-bar-right .navbar-link {
-      font-size: 4.5vw;
+      font-size: 3.2vw;
+      margin-left: 6px;
+      letter-spacing: 0;
    }
 }
 

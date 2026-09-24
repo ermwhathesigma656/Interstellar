@@ -12,6 +12,7 @@
     "deploy": "wrangler deploy",
     "preview": "wrangler dev",
     "test:worker": "node src/check-worker.js",
+    "test:ai": "node src/check-ai.js",
     "format": "pnpm biome format --write .",
     "precommit": "pnpm run format && pnpm biome check --write .",
     "lint": "biome lint --write ."
