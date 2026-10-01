@@ -1,24 +1,37 @@
 # Run inside the Azure Windows VM as SYSTEM. Config and gateway files are supplied privately by install-pc.ps1.
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$elapsed = [Diagnostics.Stopwatch]::StartNew()
 $root = 'C:\Interstellar'
 $config = Get-Content "$root\setup.json" -Raw | ConvertFrom-Json
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-Invoke-WebRequest 'https://www.tightvnc.com/download/2.8.88/tightvnc-2.8.88-gpl-setup-64bit.msi' -OutFile "$root\tightvnc.msi" -UseBasicParsing
+# Download together; the gateway only needs node.exe and ws, not npm or its installer.
+$downloads = @{
+    'tightvnc.msi' = 'https://www.tightvnc.com/download/2.8.88/tightvnc-2.8.88-gpl-setup-64bit.msi'
+    'node.exe' = 'https://nodejs.org/dist/v24.21.0/win-x64/node.exe'
+    'caddy.zip' = 'https://github.com/caddyserver/caddy/releases/download/v2.11.4/caddy_2.11.4_windows_amd64.zip'
+    'ws.tgz' = 'https://registry.npmjs.org/ws/-/ws-8.18.3.tgz'
+}
+$transfers = foreach ($file in $downloads.GetEnumerator()) {
+    Start-Process curl.exe -ArgumentList @('--fail', '--location', '--retry', '2', '--connect-timeout', '20', '--max-time', '180', '--silent', '--show-error', '--output', "$root\$($file.Key)", $file.Value) -PassThru -WindowStyle Hidden
+}
+foreach ($transfer in $transfers) {
+    $transfer.WaitForExit()
+    if ($transfer.ExitCode -ne 0) { throw "Desktop download failed: $($transfer.ExitCode)" }
+}
+Write-Output "Desktop downloads ready: $([int]$elapsed.Elapsed.TotalSeconds)s"
 $msi = Start-Process msiexec.exe -ArgumentList @('/i', "$root\tightvnc.msi", '/quiet', '/norestart', 'ADDLOCAL=Server', 'SERVER_REGISTER_AS_SERVICE=1', 'SERVER_ADD_FIREWALL_EXCEPTION=0', 'SET_ALLOWLOOPBACK=1', 'VALUE_OF_ALLOWLOOPBACK=1', 'SET_LOOPBACKONLY=1', 'VALUE_OF_LOOPBACKONLY=1', 'SET_ACCEPTHTTPCONNECTIONS=1', 'VALUE_OF_ACCEPTHTTPCONNECTIONS=0', 'SET_USEVNCAUTHENTICATION=1', 'VALUE_OF_USEVNCAUTHENTICATION=0', 'SET_NEVERSHARED=1', 'VALUE_OF_NEVERSHARED=1', 'SET_DISCONNECTCLIENTS=1', 'VALUE_OF_DISCONNECTCLIENTS=0') -PassThru -Wait -WindowStyle Hidden
 if ($msi.ExitCode -notin @(0,3010)) { throw "TightVNC installer failed: $($msi.ExitCode)" }
-Invoke-WebRequest 'https://nodejs.org/dist/v24.21.0/node-v24.21.0-win-x64.zip' -OutFile "$root\node.zip" -UseBasicParsing
-Expand-Archive "$root\node.zip" -DestinationPath $root -Force
-Invoke-WebRequest 'https://github.com/caddyserver/caddy/releases/download/v2.11.4/caddy_2.11.4_windows_amd64.zip' -OutFile "$root\caddy.zip" -UseBasicParsing
 Expand-Archive "$root\caddy.zip" -DestinationPath "$root\caddy" -Force
-Set-Location $root
-& "$root\node-v24.21.0-win-x64\npm.cmd" install --omit=dev --ignore-scripts ws@8.18.3
+New-Item -ItemType Directory -Path "$root\node_modules\ws" -Force | Out-Null
+tar.exe -xzf "$root\ws.tgz" -C "$root\node_modules\ws" --strip-components 1
 if ($LASTEXITCODE -ne 0) { throw 'WebSocket gateway installation failed.' }
 @{key=$config.gatewayKey;downloads="C:/Users/$($config.username)/Downloads"} | ConvertTo-Json | Set-Content "$root\gateway.json" -Encoding ASCII
 "$($config.hostname) {`n reverse_proxy 127.0.0.1:6080`n}" | Set-Content "$root\Caddyfile" -Encoding ASCII
 $settings = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-Register-ScheduledTask -TaskName InterstellarGateway -Action (New-ScheduledTaskAction -Execute "$root\node-v24.21.0-win-x64\node.exe" -Argument "$root\pc-gateway.cjs" -WorkingDirectory $root) -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
+Register-ScheduledTask -TaskName InterstellarGateway -Action (New-ScheduledTaskAction -Execute "$root\node.exe" -Argument "$root\pc-gateway.cjs" -WorkingDirectory $root) -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
 Register-ScheduledTask -TaskName InterstellarHTTPS -Action (New-ScheduledTaskAction -Execute "$root\caddy\caddy.exe" -Argument "run --config $root\Caddyfile --adapter caddyfile" -WorkingDirectory $root) -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
 New-NetFirewallRule -DisplayName 'Interstellar HTTPS' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 80,443 -ErrorAction SilentlyContinue | Out-Null
 # Dedicated per-account VM: sign into its own desktop after boot. Secrets stay inside that VM.
@@ -27,6 +40,7 @@ Set-ItemProperty $winlogon AutoAdminLogon '1'
 Set-ItemProperty $winlogon DefaultUserName $config.username
 Set-ItemProperty $winlogon DefaultPassword $config.password
 Set-ItemProperty $winlogon DefaultDomainName $env:COMPUTERNAME
+Remove-ItemProperty $winlogon AutoLogonCount -ErrorAction SilentlyContinue
 $system = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
 Set-ItemProperty $system EnableFirstLogonAnimation 0
 $oobe = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE'
@@ -53,4 +67,4 @@ Set-Acl -LiteralPath $root -AclObject $acl
 Start-ScheduledTask InterstellarGateway
 Start-ScheduledTask InterstellarHTTPS
 Remove-Item -LiteralPath "$root\setup.json"
-Write-Output 'INTERSTELLAR_SETUP_OK: Restart Windows to enter the desktop.'
+Write-Output "INTERSTELLAR_SETUP_OK: Desktop installed in $([int]$elapsed.Elapsed.TotalSeconds)s."
