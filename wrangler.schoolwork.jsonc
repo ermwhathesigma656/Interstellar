@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "schoolwork",
+  "main": "src/worker-schoolwork.js",
+  "compatibility_date": "2026-09-18",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "services": [{ "binding": "INTERSTELLAR", "service": "interstellar" }],
+  "durable_objects": { "bindings": [
+    { "name": "DISCORD_ASSETS", "class_name": "DiscordAssets" },
+    { "name": "VIRTUAL_PC", "class_name": "VirtualPC" }
+  ] },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["DiscordAssets"] },
+    { "tag": "v2", "new_sqlite_classes": ["VirtualPC"] }
+  ]
+}

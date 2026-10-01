@@ -24,7 +24,7 @@
 
     <section id="pc-auth" hidden aria-labelledby="pc-auth-title">
       <h2 id="pc-auth-title">Sign in to your PC</h2>
-      <p>Sign in or create an account, then activate your Windows PC with a code from the site owner.</p>
+      <p>Sign in or create an account. Your own Windows PC is assigned when you first start it, while PCs are available.</p>
       <form id="pc-auth-form">
         <label for="pc-username">Username</label>
         <input id="pc-username" autocomplete="username" required minlength="3" maxlength="20" pattern="[A-Za-z0-9_]+" spellcheck="false" />
@@ -42,24 +42,29 @@
       <i class="fa-solid fa-desktop" aria-hidden="true"></i>
       <h2 id="pc-home-title">Your PC</h2>
       <p id="pc-save-info"></p>
-      <form id="pc-claim-form" hidden>
-        <label for="pc-code">PC activation code</label>
-        <input id="pc-code" autocomplete="off" maxlength="32" required />
-        <button id="pc-claim" type="submit">Activate my PC</button>
-      </form>
       <div id="pc-home-actions">
         <button id="pc-start" type="button"><span id="pc-start-label">Start my PC</span> <i class="fa-solid fa-power-off" aria-hidden="true"></i></button>
       </div>
-      <p class="pc-footnote">Starting Windows may take a few minutes. Save your work in Windows before leaving. Closing this tab shuts the PC down; saved files stay on its disk. A lost connection is detected within 90 seconds.</p>
+      <p class="pc-footnote">Starting Windows may take a few minutes. Save your work in Windows before leaving. Closing this tab shuts the PC down; saved files stay on its disk. A lost connection is detected within 3 minutes.</p>
     </section>
 
     <section id="pc-machine" hidden aria-label="Your PC">
       <div id="pc-toolbar">
+        <button id="pc-desktop" type="button">Show desktop</button>
         <button id="pc-cad" type="button">Ctrl+Alt+Del</button>
+        <label for="pc-quality">Picture <select id="pc-quality"><option value="2">Faster</option><option value="5" selected>Balanced</option><option value="8">Sharper</option></select></label>
+        <button id="pc-upload" type="button">Upload file / EXE</button>
+        <input id="pc-file" type="file" hidden />
+        <button id="pc-reconnect" type="button">Reconnect</button>
+        <button id="pc-restart" type="button">Restart</button>
         <button id="pc-fullscreen" type="button"><i class="fa-solid fa-expand" aria-hidden="true"></i> Full screen</button>
         <button id="pc-stop" type="button"><i class="fa-solid fa-power-off" aria-hidden="true"></i> Shut down</button>
       </div>
-      <div id="pc-screen" tabindex="0" aria-label="Windows desktop"></div>
+      <div id="pc-display">
+        <div id="pc-screen" tabindex="0" aria-label="Windows desktop"></div>
+        <div id="pc-connection" role="status">Connecting to Windows…</div>
+      </div>
+      <p id="pc-transfer" role="status" aria-live="polite"></p>
     </section>
 
     <p id="pc-status" role="status" aria-live="polite"></p>

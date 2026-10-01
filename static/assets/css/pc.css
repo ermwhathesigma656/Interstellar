@@ -1,4 +1,4 @@
-#pc-shell { box-sizing: border-box; color: var(--text); width: min(1100px, calc(100% - 40px)); margin: calc(10vh + 40px) auto 20px; display: flex; flex-direction: column; gap: 16px; }
+#pc-shell { box-sizing: border-box; color: var(--text); width: calc(100% - 32px); margin: calc(10vh + 28px) auto 16px; display: flex; flex-direction: column; gap: 12px; }
 #pc-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 #pc-heading h1 { margin: 0; font-size: 27px; letter-spacing: -.7px; }
 #pc-heading p { color: var(--text-muted); margin: 8px 0 0; font-size: 14px; }
@@ -20,12 +20,18 @@
 #pc-home > i { font-size: 36px; margin-bottom: 10px; }
 #pc-home-actions { justify-content: center; }
 .pc-footnote { font-size: 12px !important; margin: 18px 0 0 !important; }
-#pc-machine { display: flex; flex-direction: column; gap: 10px; align-items: center; }
-#pc-toolbar { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
-#pc-screen { background: #000; border-radius: 8px; overflow: hidden; width: 100%; height: max(360px, calc(100dvh - 280px)); }
-#pc-screen:fullscreen { height: 100dvh; border-radius: 0; }
-#pc-claim-form { display: flex; flex-direction: column; gap: 12px; }
-#pc-code { color: var(--text); background: var(--background); border: 1px solid var(--border-strong); border-radius: var(--radius-md); padding: 12px; }
+#pc-machine { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+#pc-toolbar { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; justify-content: center; }
+#pc-toolbar button { padding: 8px 10px; }
+#pc-toolbar label { font-size: 13px; }
+#pc-quality { font: inherit; color: var(--text); background: var(--surface-button); border: 1px solid var(--border-strong); border-radius: 6px; padding: 8px; }
+#pc-display { position: relative; height: max(340px, calc(100dvh - 295px)); min-height: 0; }
+#pc-screen { background: #000; border-radius: 8px; overflow: hidden; width: 100%; height: 100%; }
+#pc-connection { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px; background: #111e; color: #fff; border-radius: 8px; }
+#pc-machine:fullscreen { padding: 8px; box-sizing: border-box; background: var(--background); }
+#pc-machine:fullscreen #pc-display { flex: 1; height: auto; }
+#pc-transfer { font-size: 13px; color: var(--text-muted); margin: 0; text-align: center; }
+#pc-transfer:empty { display: none; }
 #pc-status { min-height: 0; margin: 0; color: var(--text-muted); font-size: 14px; text-align: center; line-height: 1.5; }
 #pc-status:empty { display: none; }
 #pc-status[data-error="true"] { color: var(--danger); }

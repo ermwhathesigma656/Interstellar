@@ -2,7 +2,8 @@ import { DurableObject } from "cloudflare:workers";
 import { azurePower, desktopFetch } from "./worker-azure.js";
 
 const SESSION_DAYS = 30;
-const LEASE_MS = 90000;
+const LEASE_MS = 180000;
+const MAX_UPLOAD = 50 * 1024 * 1024;
 const COOKIE = "ispc";
 const encoder = new TextEncoder();
 const hex = bytes => [...new Uint8Array(bytes)].map(byte => byte.toString(16).padStart(2, "0")).join("");
@@ -30,11 +31,15 @@ export async function pcApi(request, env) {
   }
   if (!env.VIRTUAL_PC || !env.PC_RATE_LIMITER) return reply({ error: "PCs are not configured yet." }, 503);
   const action = url.pathname.slice("/api/pc/".length);
-  const methods = { signup: "POST", login: "POST", logout: "POST", me: "GET", claim: "POST", start: "POST", heartbeat: "POST", release: "POST", desktop: "GET" };
+  const methods = { signup: "POST", login: "POST", logout: "POST", me: "GET", start: "POST", restart: "POST", upload: "POST", heartbeat: "POST", release: "POST", desktop: "GET" };
   if (!methods[action]) return reply({ error: "Not found." }, 404);
   if (request.method !== methods[action]) return reply({ error: `Use ${methods[action]}.` }, 405);
   let body = {};
-  if (request.method === "POST") {
+  if (action === "upload") {
+    const length = request.headers.get("Content-Length");
+    if (!length || !/^\d+$/.test(length) || Number(length) < 1 || Number(length) > MAX_UPLOAD) return reply({ error: "Choose a file between 1 byte and 50 MB." }, 413);
+    body = { lease: request.headers.get("X-Lease") };
+  } else if (request.method === "POST") {
     let text = "";
     let size = 0;
     const decoder = new TextDecoder();
@@ -47,7 +52,7 @@ export async function pcApi(request, env) {
     try { body = text ? JSON.parse(text) : {}; } catch { return reply({ error: "Invalid request." }, 400); }
     if (!body || typeof body !== "object" || Array.isArray(body)) return reply({ error: "Invalid request." }, 400);
   }
-  if (["signup", "login", "claim"].includes(action)) {
+  if (["signup", "login"].includes(action)) {
     const { success } = await env.PC_RATE_LIMITER.limit({ key: request.headers.get("CF-Connecting-IP") || "local" });
     if (!success) return reply({ error: "Too many attempts. Please wait a minute." }, 429);
   }
@@ -71,6 +76,24 @@ export async function pcApi(request, env) {
   const result = await env.VIRTUAL_PC.getByName(session[1]).fetch(`https://pc/${action}`, {
     method: request.method, headers, body: request.method === "POST" ? JSON.stringify(body) : null,
   });
+  if (action === "upload" && result.ok) {
+    // Authorize inside the account lock; stream outside it so transfers cannot pause desktop input.
+    const { id } = await result.json();
+    const machine = JSON.parse(env.PC_MACHINES).find(item => item.id === id);
+    let size = 0;
+    const limited = request.body.pipeThrough(new TransformStream({ transform(chunk, controller) {
+      size += chunk.byteLength;
+      if (size > MAX_UPLOAD || size > Number(request.headers.get("Content-Length"))) throw new Error("Upload too large");
+      controller.enqueue(chunk);
+    } }));
+    try {
+      const uploaded = await desktopFetch(machine, "/upload", { method: "POST", body: limited, headers: {
+        "Content-Type": "application/octet-stream", "X-Filename": request.headers.get("X-Filename") || "",
+        "X-File-Size": request.headers.get("Content-Length"),
+      } });
+      return reply(await uploaded.json(), uploaded.status);
+    } catch { return reply({ error: "The upload was interrupted. Reconnect to Windows and try again." }, 503); }
+  }
   if (action === "logout" && result.ok) return reply({ ok: true }, 200, { "Set-Cookie": cookie(request, "", 0) });
   return result;
 }
@@ -105,9 +128,9 @@ export class VirtualPC extends DurableObject {
       }
     });
   }
-  closeDesktop() {
-    const sockets = this.sockets;
-    this.sockets = null;
+  closeDesktop(sockets = this.sockets) {
+    // Late events from an old connection must never close its replacement.
+    if (this.sockets === sockets) this.sockets = null;
     for (const ws of sockets || []) { try { ws.close(1000, "Desktop session ended"); } catch {} }
   }
   async stop() {
@@ -139,14 +162,13 @@ export class VirtualPC extends DurableObject {
     const action = new URL(request.url).pathname.slice(1);
     // Internal only: pcApi never forwards this route. Each VM gets one permanent owner.
     if (action === "assign") {
-      const { username, invitation } = await request.json();
-      const hash = await tokenHash(invitation);
-      const machine = this.machines().find(item => sameText(item.invitationHash, hash));
-      if (!machine) return reply({ error: "That activation code is invalid." }, 400);
-      const owner = this.sql.exec("SELECT username FROM machine_claims WHERE machine = ?", machine.id).toArray()[0];
-      if (owner && owner.username !== username) return reply({ error: "That PC already belongs to another account." }, 409);
+      const { username } = await request.json();
       const existing = this.sql.exec("SELECT machine FROM machine_claims WHERE username = ?", username).toArray()[0];
-      if (existing && existing.machine !== machine.id) return reply({ error: "This account already has a PC." }, 409);
+      if (existing) return reply({ id: existing.machine });
+      // Assign only pre-provisioned PCs. Public signups must never create unbounded Azure spending.
+      const owned = new Set(this.sql.exec("SELECT machine FROM machine_claims").toArray().map(item => item.machine));
+      const machine = this.machines().find(item => !owned.has(item.id));
+      if (!machine) return reply({ error: "All Windows PCs are assigned. The site owner needs to add another PC for your account." }, 409);
       this.sql.exec("INSERT OR IGNORE INTO machine_claims VALUES (?, ?)", machine.id, username);
       return reply({ id: machine.id });
     }
@@ -167,7 +189,7 @@ export class VirtualPC extends DurableObject {
     const token = await tokenHash(request.headers.get("X-Session") || "");
     const session = account && this.sql.exec("SELECT expires FROM sessions WHERE token = ?", token).toArray()[0];
     if (!session || session.expires < Date.now()) return reply({ error: "Your sign-in expired. Please sign in again." }, 401);
-    const machine = await this.machine();
+    let machine = await this.machine();
     let lease = await this.ctx.storage.get("lease");
     if (action === "me") return reply({ username: account.username, assigned: !!machine, busy: !!lease, stopping: !!lease?.stopping });
     if (action === "logout") {
@@ -176,18 +198,16 @@ export class VirtualPC extends DurableObject {
       return reply({ ok: true });
     }
     const body = request.method === "POST" ? await request.json() : {};
-    if (action === "claim") {
-      if (machine) return reply({ error: "Your account already has a PC." }, 409);
-      if (typeof body.invitation !== "string" || !/^[a-f0-9]{32}$/.test(body.invitation)) return reply({ error: "Enter your PC activation code." }, 400);
-      const response = await this.env.VIRTUAL_PC.getByName("!registry").fetch("https://pc/assign", { method: "POST", body: JSON.stringify({ username: account.username, invitation: body.invitation }) });
-      const result = await response.json();
-      if (!response.ok) return reply(result, response.status);
-      await this.ctx.storage.put("machine", result.id);
-      return reply({ ok: true });
-    }
-    if (!machine) return reply({ error: "Activate your PC with the code from the site owner first." }, 409);
     if (action === "start") {
       if (typeof body.client !== "string" || !/^[a-f0-9-]{36}$/.test(body.client)) return reply({ error: "Invalid desktop session." }, 400);
+      if (!machine) {
+        const response = await this.env.VIRTUAL_PC.getByName("!registry").fetch("https://pc/assign", { method: "POST", body: JSON.stringify({ username: account.username }) });
+        const result = await response.json();
+        if (!response.ok) return reply(result, response.status);
+        await this.ctx.storage.put("machine", result.id);
+        machine = await this.machine();
+      }
+      if (!machine) return reply({ error: "Your PC is temporarily unavailable. Contact the site owner." }, 503);
       if (lease) {
         if (!lease.stopping && lease.expires > Date.now() && lease.session === token && lease.client === body.client) return reply({ lease: lease.id });
         if (lease.expires <= Date.now() && !lease.stopping) await this.stop();
@@ -200,45 +220,66 @@ export class VirtualPC extends DurableObject {
       await azurePower(this.env, machine, "start");
       return reply({ lease: lease.id });
     }
+    if (!machine) return reply({ error: "Start your PC first." }, 409);
     const leaseId = action === "desktop" ? request.headers.get("X-Lease") : body.lease;
     if (!lease || lease.stopping || lease.expires <= Date.now() || lease.session !== token || !sameText(lease.id, typeof leaseId === "string" ? leaseId : "")) return reply({ error: "This desktop session ended. Start your PC again." }, 409);
     if (action === "release") { await this.stop(); return reply({ ok: true }); }
+    if (action === "upload") {
+      if (lease.restarting) return reply({ error: "Wait for Windows to finish restarting before uploading." }, 409);
+      return reply({ id: machine.id });
+    }
+    if (action === "restart") {
+      if (lease.restarting) return reply({ error: "Windows is already restarting." }, 409);
+      let bootId = "unavailable";
+      try { bootId = (await (await desktopFetch(machine, "/health")).json()).bootId || bootId; } catch {}
+      await azurePower(this.env, machine, "restart");
+      this.closeDesktop();
+      lease.restarting = bootId;
+      lease.readyBy = Date.now() + 600000;
+      lease.expires = Date.now() + LEASE_MS;
+      await this.ctx.storage.put("lease", lease);
+      await this.ctx.storage.setAlarm(lease.expires);
+      return reply({ ok: true });
+    }
     if (action === "heartbeat") {
       lease.expires = Date.now() + LEASE_MS;
       await this.ctx.storage.put("lease", lease);
       await this.ctx.storage.setAlarm(lease.expires);
-      let ready = !!this.sockets;
+      let ready = !!this.sockets && !lease.restarting;
       if (!ready) try {
         const health = await desktopFetch(machine, "/health");
-        ready = health.ok;
+        const info = health.ok ? await health.json() : {};
+        ready = health.ok && !!info.bootId && info.bootId !== lease.restarting;
         if (!ready) console.warn("PC gateway health status", health.status);
       } catch (error) { console.warn("PC gateway connection", error.message); }
       if (!ready && lease.readyBy < Date.now()) {
         await this.stop();
         return reply({ error: "Windows did not respond. Your PC is shutting down; try starting it again shortly." }, 409);
       }
-      if (ready) { lease.readyBy = Date.now() + 180000; await this.ctx.storage.put("lease", lease); }
-      return reply({ ready });
+      if (ready) { delete lease.restarting; lease.readyBy = Date.now() + 180000; await this.ctx.storage.put("lease", lease); }
+      return reply({ ready, restarting: !!lease.restarting });
     }
     if (action === "desktop") {
-      if (this.sockets) return reply({ error: "This PC already has an active connection." }, 409);
-      const upstream = await desktopFetch(machine, "/desktop", true);
+      if (lease.restarting) return reply({ error: "Windows is restarting." }, 503);
+      this.closeDesktop();
+      const upstream = await desktopFetch(machine, "/desktop", { headers: { Upgrade: "websocket" } });
       if (upstream.status !== 101 || !upstream.webSocket) return reply({ error: "Windows is still starting. Please wait." }, 503);
       const remote = upstream.webSocket;
       const [client, server] = Object.values(new WebSocketPair());
       remote.binaryType = "arraybuffer";
       server.binaryType = "arraybuffer";
-      this.sockets = [server, remote];
+      const sockets = [server, remote];
+      this.sockets = sockets;
       const bridge = (from, to, direction) => {
         let first = true;
         from.addEventListener("message", event => {
           if (first) { console.log("PC first frame", direction, typeof event.data, event.data.byteLength ?? event.data.length); first = false; }
-          try { to.send(event.data); } catch (error) { console.warn("PC frame forwarding failed", error.message); this.closeDesktop(); }
+          try { to.send(event.data); } catch (error) { console.warn("PC frame forwarding failed", error.message); this.closeDesktop(sockets); }
         });
       };
       bridge(server, remote, "to Windows"); bridge(remote, server, "from Windows");
-      const close = () => this.closeDesktop();
-      for (const socket of this.sockets) { socket.addEventListener("close", close); socket.addEventListener("error", close); }
+      const close = () => this.closeDesktop(sockets);
+      for (const socket of sockets) { socket.addEventListener("close", close); socket.addEventListener("error", close); }
       remote.accept();
       server.accept();
       return new Response(null, { status: 101, webSocket: client });

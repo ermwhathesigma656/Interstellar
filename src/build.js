@@ -745,8 +745,7 @@ function applyRouteRewrites(source, table) {
 //
 // The pool is span plus valid custom-element names (each has the required hyphen). Unregistered
 // custom elements render inline with no styling, so text flows contiguously and the visible result
-// is byte identical. The audit in the earlier proxy-label work verified option text keeps its
-// textContent, which is what the one JS reader (the cloak sort's localeCompare) depends on.
+// is byte identical. Native option labels stay plain so browsers expose their accessible names.
 const SPLIT_WRAPPERS = ["span", "x-a", "x-b", "ab-x", "s-p"];
 
 function fnv1a(str) {
@@ -850,7 +849,7 @@ function hardenTextRun(text) {
 // Text that must not be wrapped: executable, presentational-verbatim, or where injected markup
 // would render as literal text (title). Pulled out first so the text-node matcher can stay a flat
 // regex, the same way obfuscateTextNodes relies on obfuscateHtmlMarkup having protected them.
-const HARDEN_SKIP = /<(script|style|pre|code|textarea|template|title|noscript|svg)\b[\s\S]*?<\/\1>|<!--[\s\S]*?-->/gi;
+const HARDEN_SKIP = /<(script|style|pre|code|textarea|template|title|noscript|svg|option)\b[\s\S]*?<\/\1>|<!--[\s\S]*?-->/gi;
 
 function hardenTextNodes(html) {
   const skipped = [];

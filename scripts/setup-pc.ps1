@@ -13,7 +13,7 @@ Expand-Archive "$root\caddy.zip" -DestinationPath "$root\caddy" -Force
 Set-Location $root
 & "$root\node-v24.21.0-win-x64\npm.cmd" install --omit=dev --ignore-scripts ws@8.18.3
 if ($LASTEXITCODE -ne 0) { throw 'WebSocket gateway installation failed.' }
-@{key=$config.gatewayKey} | ConvertTo-Json | Set-Content "$root\gateway.json" -Encoding ASCII
+@{key=$config.gatewayKey;downloads="C:/Users/$($config.username)/Downloads"} | ConvertTo-Json | Set-Content "$root\gateway.json" -Encoding ASCII
 "$($config.hostname) {`n reverse_proxy 127.0.0.1:6080`n}" | Set-Content "$root\Caddyfile" -Encoding ASCII
 $settings = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 $trigger = New-ScheduledTaskTrigger -AtStartup
@@ -32,8 +32,16 @@ Set-ItemProperty $system EnableFirstLogonAnimation 0
 $oobe = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE'
 if (!(Test-Path $oobe)) { New-Item $oobe | Out-Null }
 New-ItemProperty $oobe PrivacyConsentStatus -Value 1 -PropertyType DWord -Force | Out-Null
+$oobePolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\OOBE'
+if (!(Test-Path $oobePolicy)) { New-Item $oobePolicy -Force | Out-Null }
+New-ItemProperty $oobePolicy DisablePrivacyExperience -Value 1 -PropertyType DWord -Force | Out-Null
+$edgePolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
+if (!(Test-Path $edgePolicy)) { New-Item $edgePolicy -Force | Out-Null }
+New-ItemProperty $edgePolicy HideFirstRunExperience -Value 1 -PropertyType DWord -Force | Out-Null
 powercfg /change standby-timeout-ac 0
 powercfg /change monitor-timeout-ac 0
+New-ItemProperty 'HKLM:\SOFTWARE\TightVNC\Server' PollingInterval -Value 100 -PropertyType DWord -Force | Out-Null
+New-ItemProperty 'HKLM:\SOFTWARE\TightVNC\Server' IdleTimeout -Value 0 -PropertyType DWord -Force | Out-Null
 # Guest files are only readable by administrators and SYSTEM.
 $acl = New-Object System.Security.AccessControl.DirectorySecurity
 $acl.SetAccessRuleProtection($true, $false)

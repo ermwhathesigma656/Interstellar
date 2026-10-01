@@ -35,21 +35,22 @@ async function accessToken(env) {
 }
 
 export async function azurePower(env, machine, action) {
-  if (!["start", "deallocate", "instanceView"].includes(action)) throw new Error("Invalid power action");
+  if (!["start", "restart", "deallocate", "instanceView"].includes(action)) throw new Error("Invalid power action");
   const token = await accessToken(env);
   const response = await fetch(`https://management.azure.com${machine.resourceId}/${action}?api-version=2024-07-01`, {
     method: action === "instanceView" ? "GET" : "POST", headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(8000),
   });
-  if (!response.ok) throw new Error(`Azure could not ${action === "deallocate" ? "stop" : action === "start" ? "start" : "check"} your PC. Please try again shortly.`);
+  if (!response.ok) throw new Error(`Azure could not ${action === "deallocate" ? "stop" : action === "instanceView" ? "check" : action} your PC. Please try again shortly.`);
   if (action === "instanceView") return (await response.json()).statuses?.find(item => item.code.startsWith("PowerState/"))?.code;
 }
 
-export async function desktopFetch(machine, path, upgrade = false) {
+export async function desktopFetch(machine, path, options = {}) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 5000);
+  const timer = setTimeout(() => controller.abort(), options.body ? 120000 : 5000);
   try {
     return await fetch(`${machine.url}${path}`, {
-      headers: { Authorization: `Bearer ${machine.key}`, ...(upgrade ? { Upgrade: "websocket" } : {}) },
+      ...options,
+      headers: { ...options.headers, Authorization: `Bearer ${machine.key}` },
       signal: controller.signal,
     });
   } finally { clearTimeout(timer); }

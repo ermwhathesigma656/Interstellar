@@ -1,5 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { generateKeyPairSync, createHash } from "node:crypto";
+import { generateKeyPairSync } from "node:crypto";
 const privateDir = new URL("../.wrangler/", import.meta.url);
 const read = async name => JSON.parse(await readFile(new URL(name, privateDir), "utf8"));
 const identity = await read("pc-azure-identity.json");
@@ -15,7 +15,6 @@ for (const name of process.argv.slice(2).length ? process.argv.slice(2) : ["inte
   const pc = await read(`${name}.json`);
   machines.push({ id: name, resourceId: `${identity.id.split("/providers/")[0]}/providers/Microsoft.Compute/virtualMachines/${name}`,
     url: `https://${pc.dns}.${pc.location}.cloudapp.azure.com`, key: pc.gatewayKey,
-    invitationHash: createHash("sha256").update(pc.invitation).digest("hex"),
   });
 }
 await writeFile(new URL("pc-secrets.json", privateDir), JSON.stringify({
