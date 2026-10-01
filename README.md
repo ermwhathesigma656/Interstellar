@@ -64,8 +64,10 @@ limits. These are best-effort abuse limits, not a billing cap. The OpenAI model
 may need updating if OpenAI retires it.
 
 The **PC** tab connects to a real Windows 10 Azure VM using noVNC. Each account
-automatically claims one available, pre-provisioned VM on its first start. Public
-sign-ups never create Azure resources. `VirtualPC` Durable Objects serialize
+automatically claims one available VM on its first start. When automatic provisioning
+is configured, it creates a VM if none is available, up to the owner's total PC cap.
+Each account permanently owns one PC; repeated starts never create another.
+`VirtualPC` Durable Objects serialize
 session ownership: only one tab/device can control an account's PC. Closing the
 tab releases it; lost connections expire after three minutes. Durable Object alarms
 retry Azure deallocation until confirmed, and start requests wait for shutdown
@@ -73,8 +75,8 @@ to finish. Windows files persist on the OS disk; save documents before leaving,
 because running applications and unsaved work do not survive shutdown.
 
 The Worker uses an Azure user-assigned managed identity with federated trust in
-its signing key and a resource-group-scoped role allowing only VM reads, starts,
-restarts, and deallocation. `PC_AZURE` and `PC_MACHINES` are **Worker secrets**. Only the
+its signing key and a resource-group-scoped role for VM lifecycle and deployment of
+dedicated VM/network resources. `PC_AZURE` and `PC_MACHINES` are **Worker secrets**. Only the
 public verification key is served by `/pc-jwks.json`. The guest runs TightVNC on
 loopback, a WebSocket bridge, and Caddy HTTPS. Azure exposes only ports 80/443;
 desktop requests also require a private gateway key injected by the Worker.
@@ -88,15 +90,24 @@ that list. Each added PC consumes Azure credits, including disk/IP charges while
 deallocated. Keep the Azure Students spending limit enabled. This is not an
 unlimited free VM service. Run `npm run test:pc` for isolation and lifecycle checks.
 
+For automatic creation, put `resourceGroup` (full Azure resource ID), `location`,
+`maxPCs` (the total account/PC cap), and `sourceRoot` (an immutable Git commit's
+HTTPS scripts directory) in `.wrangler/pc-provisioning.json` before running the
+configuration script. The deployment uses secure parameters for Windows passwords
+and gateway credentials, creates a separate network per PC, installs the gateway,
+and restarts Windows after the extension completes. A closed session is deallocated
+after any in-progress deployment finishes. Existing Windows image activation is
+preserved; website users never enter a Windows key or a PC assignment code.
+
 The desktop reconnects automatically after an interrupted connection. Its toolbar
 provides Restart, Reconnect, Show desktop, picture quality and full-screen controls.
 Upload file / EXE streams files up to 50 MB into that PC's Windows Downloads folder;
 files are never automatically run or overwritten. The guest validates Windows
 filenames, removes interrupted transfers, and preserves Windows download marking.
-`schoolwork.gonicvrnew.workers.dev` uses a service binding to the main deployment,
-so both addresses share accounts, PC ownership and updates. Deploy that address
-with `npx wrangler deploy --config wrangler.schoolwork.jsonc`; keep the main
-`interstellar` Worker because it owns the PCs and supplies Azure's signing keys.
+`schoolwork.gonicvrnew.workers.dev` uses a service binding for the PC and AI APIs,
+so both addresses share accounts and PC ownership. GitHub deployments retain that
+binding. Deploy that address with `npx wrangler deploy --name schoolwork`; keep the
+main `interstellar` Worker because it owns the PCs and supplies Azure's signing keys.
 
 > [!IMPORTANT]
 > You **cannot** deploy to static web hosts, including Netlify, Cloudflare Pages, and GitHub Pages.

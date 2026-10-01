@@ -115,6 +115,13 @@ export default {
       });
     }
     const url = new URL(request.url);
+    // Git-connected copies keep their own assets but share the original accounts and secrets.
+    if (url.hostname === "schoolwork.gonicvrnew.workers.dev" && (url.pathname.startsWith("/api/pc/") || url.pathname === "/api/ai/chat")) {
+      const headers = new Headers(request.headers);
+      if (headers.get("Origin") === url.origin) headers.set("Origin", "https://interstellar.gonicvrnew.workers.dev");
+      url.hostname = "interstellar.gonicvrnew.workers.dev";
+      return env.PC_BACKEND.fetch(new Request(new Request(url, request), { headers }));
+    }
     if (url.pathname === "/api/ai/chat") return chat(request, env);
     if (url.pathname.startsWith("/api/pc/")) return pcApi(request, env);
     if (["/.well-known/openid-configuration", "/pc-jwks.json"].includes(url.pathname)) return pcIdentity(url.pathname, env);

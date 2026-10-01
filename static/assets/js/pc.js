@@ -122,11 +122,15 @@
       if (lease !== current) return;
       failures = 0;
       if (result.ready) await connectDesktop(current);
-      else connectionNotice(result.restarting ? "Windows is restarting. Reconnecting automatically…" : "Windows is starting. This can take a few minutes…");
+      else connectionNotice(result.provisioning ? "Creating your personal Windows PC. First-time setup can take 10–20 minutes…" : result.restarting ? "Windows is restarting. Reconnecting automatically…" : "Windows is starting. This can take a few minutes…");
     } catch (error) {
       if (lease !== current) return;
       failures++;
-      if ([401,409].includes(error.status) || failures >= 4) { await release(); notice(error.message, true); return; }
+      if ([401,409].includes(error.status) || failures >= 4) {
+        await release();
+        if (error.status === 401) { me = null; show(); }
+        notice(error.message, true); return;
+      }
       connectionNotice("Waiting for your connection. Retrying automatically…");
     } finally { polling = false; if (lease === current) schedule(rfb ? 20000 : 3000); }
   }

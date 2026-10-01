@@ -34,12 +34,16 @@ async function accessToken(env) {
   return cachedToken.value;
 }
 
+export async function azureRequest(env, resource, options = {}) {
+  return fetch(`https://management.azure.com${resource}`, {
+    ...options, headers: { ...options.headers, Authorization: `Bearer ${await accessToken(env)}` }, signal: AbortSignal.timeout(8000),
+  });
+}
+
 export async function azurePower(env, machine, action) {
   if (!["start", "restart", "deallocate", "instanceView"].includes(action)) throw new Error("Invalid power action");
-  const token = await accessToken(env);
-  const response = await fetch(`https://management.azure.com${machine.resourceId}/${action}?api-version=2024-07-01`, {
-    method: action === "instanceView" ? "GET" : "POST", headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(8000),
-  });
+  const response = await azureRequest(env, `${machine.resourceId}/${action}?api-version=2024-07-01`, { method: action === "instanceView" ? "GET" : "POST" });
+  if (response.status === 404 && action === "instanceView") return "PowerState/deallocated";
   if (!response.ok) throw new Error(`Azure could not ${action === "deallocate" ? "stop" : action === "instanceView" ? "check" : action} your PC. Please try again shortly.`);
   if (action === "instanceView") return (await response.json()).statuses?.find(item => item.code.startsWith("PowerState/"))?.code;
 }

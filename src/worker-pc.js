@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { azurePower, desktopFetch } from "./worker-azure.js";
+import { provisioningConfig, newMachine, provision } from "./worker-provision.js";
 
 const SESSION_DAYS = 30;
 const LEASE_MS = 180000;
@@ -37,7 +38,7 @@ export async function pcApi(request, env) {
   let body = {};
   if (action === "upload") {
     const length = request.headers.get("Content-Length");
-    if (!length || !/^\d+$/.test(length) || Number(length) < 1 || Number(length) > MAX_UPLOAD) return reply({ error: "Choose a file between 1 byte and 50 MB." }, 413);
+    if (!request.body || !length || !/^\d+$/.test(length) || Number(length) < 1 || Number(length) > MAX_UPLOAD) return reply({ error: "Choose a file between 1 byte and 50 MB." }, 413);
     body = { lease: request.headers.get("X-Lease") };
   } else if (request.method === "POST") {
     let text = "";
@@ -78,8 +79,7 @@ export async function pcApi(request, env) {
   });
   if (action === "upload" && result.ok) {
     // Authorize inside the account lock; stream outside it so transfers cannot pause desktop input.
-    const { id } = await result.json();
-    const machine = JSON.parse(env.PC_MACHINES).find(item => item.id === id);
+    const machine = await result.json();
     let size = 0;
     const limited = request.body.pipeThrough(new TransformStream({ transform(chunk, controller) {
       size += chunk.byteLength;
@@ -115,6 +115,8 @@ export class VirtualPC extends DurableObject {
   }
   machines() { return JSON.parse(this.env.PC_MACHINES || "[]"); }
   async machine() {
+    const provisioned = await this.ctx.storage.get("provisioned");
+    if (provisioned) return provisioned;
     const id = await this.ctx.storage.get("machine");
     return this.machines().find(item => item.id === id);
   }
@@ -141,6 +143,14 @@ export class VirtualPC extends DurableObject {
     await this.ctx.storage.setAlarm(Date.now() + 30000);
     const machine = await this.machine();
     if (!machine) return;
+    if (machine.provisioning) {
+      const state = await provision(this.env, machine);
+      if (!["Succeeded", "Failed", "Canceled", "Missing"].includes(state)) return;
+      machine.provisioning = false;
+      machine.failed = state !== "Succeeded";
+      if (!machine.failed) delete machine.password;
+      await this.ctx.storage.put("provisioned", machine);
+    }
     if (await azurePower(this.env, machine, "instanceView") !== "PowerState/deallocated") {
       await azurePower(this.env, machine, "deallocate");
       return;
@@ -164,13 +174,15 @@ export class VirtualPC extends DurableObject {
     if (action === "assign") {
       const { username } = await request.json();
       const existing = this.sql.exec("SELECT machine FROM machine_claims WHERE username = ?", username).toArray()[0];
-      if (existing) return reply({ id: existing.machine });
-      // Assign only pre-provisioned PCs. Public signups must never create unbounded Azure spending.
+      if (existing) return reply({ id: existing.machine, automatic: !this.machines().some(item => item.id === existing.machine) });
       const owned = new Set(this.sql.exec("SELECT machine FROM machine_claims").toArray().map(item => item.machine));
-      const machine = this.machines().find(item => !owned.has(item.id));
-      if (!machine) return reply({ error: "All Windows PCs are assigned. The site owner needs to add another PC for your account." }, 409);
+      let machine = this.machines().find(item => !owned.has(item.id));
+      const config = provisioningConfig(this.env);
+      const automatic = !machine;
+      if (!machine && config && owned.size < config.maxPCs) machine = { id: `pc-${random().slice(0,12)}` };
+      if (!machine) return reply({ error: "Azure's PC capacity has been reached. Your account can have one PC when the site owner adds capacity." }, 409);
       this.sql.exec("INSERT OR IGNORE INTO machine_claims VALUES (?, ?)", machine.id, username);
-      return reply({ id: machine.id });
+      return reply({ id: machine.id, automatic });
     }
     const account = this.sql.exec("SELECT username, salt, hash FROM account WHERE id = 1").toArray()[0];
     if (action === "signup") {
@@ -204,6 +216,7 @@ export class VirtualPC extends DurableObject {
         const response = await this.env.VIRTUAL_PC.getByName("!registry").fetch("https://pc/assign", { method: "POST", body: JSON.stringify({ username: account.username }) });
         const result = await response.json();
         if (!response.ok) return reply(result, response.status);
+        if (result.automatic) await this.ctx.storage.put("provisioned", newMachine(this.env, result.id));
         await this.ctx.storage.put("machine", result.id);
         machine = await this.machine();
       }
@@ -214,10 +227,12 @@ export class VirtualPC extends DurableObject {
         const stopping = lease.stopping || lease.expires <= Date.now();
         return reply({ code: stopping ? "PC_STOPPING" : "PC_IN_USE", error: stopping ? "Waiting for your PC to finish shutting down…" : "Your PC is open in another tab or device. Close that session first." }, 409);
       }
-      lease = { id: random(), session: token, client: body.client, expires: Date.now() + LEASE_MS, readyBy: Date.now() + 600000 };
+      if (machine.failed) { machine.provisioning = true; machine.failed = false; await this.ctx.storage.put("provisioned", machine); }
+      lease = { id: random(), session: token, client: body.client, expires: Date.now() + LEASE_MS, readyBy: Date.now() + (machine.provisioning ? 1500000 : 600000) };
       await this.ctx.storage.put("lease", lease);
       await this.ctx.storage.setAlarm(lease.expires);
-      await azurePower(this.env, machine, "start");
+      if (machine.provisioning) await provision(this.env, machine, true);
+      else await azurePower(this.env, machine, "start");
       return reply({ lease: lease.id });
     }
     if (!machine) return reply({ error: "Start your PC first." }, 409);
@@ -225,10 +240,11 @@ export class VirtualPC extends DurableObject {
     if (!lease || lease.stopping || lease.expires <= Date.now() || lease.session !== token || !sameText(lease.id, typeof leaseId === "string" ? leaseId : "")) return reply({ error: "This desktop session ended. Start your PC again." }, 409);
     if (action === "release") { await this.stop(); return reply({ ok: true }); }
     if (action === "upload") {
-      if (lease.restarting) return reply({ error: "Wait for Windows to finish restarting before uploading." }, 409);
-      return reply({ id: machine.id });
+      if (lease.restarting || machine.provisioning) return reply({ error: "Wait for Windows to finish starting before uploading." }, 409);
+      return reply({ id: machine.id, url: machine.url, key: machine.key });
     }
     if (action === "restart") {
+      if (machine.provisioning) return reply({ error: "Windows is still being installed. Please wait." }, 409);
       if (lease.restarting) return reply({ error: "Windows is already restarting." }, 409);
       let bootId = "unavailable";
       try { bootId = (await (await desktopFetch(machine, "/health")).json()).bootId || bootId; } catch {}
@@ -245,6 +261,28 @@ export class VirtualPC extends DurableObject {
       lease.expires = Date.now() + LEASE_MS;
       await this.ctx.storage.put("lease", lease);
       await this.ctx.storage.setAlarm(lease.expires);
+      if (machine.provisioning) {
+        const state = await provision(this.env, machine);
+        if (["Failed", "Canceled"].includes(state)) {
+          await this.stop();
+          return reply({ error: "Azure could not finish creating Windows. Check the subscription's credits and VM quota before trying again." }, 409);
+        }
+        if (state !== "Succeeded") {
+          if (lease.readyBy < Date.now()) { await this.stop(); return reply({ error: "Windows setup took too long. Your PC will shut down safely after setup completes." }, 409); }
+          if (state === "Missing") await provision(this.env, machine, true);
+          return reply({ ready: false, provisioning: true });
+        }
+        let bootId = "unavailable";
+        try { bootId = (await (await desktopFetch(machine, "/health")).json()).bootId || bootId; } catch {}
+        await azurePower(this.env, machine, "restart");
+        machine.provisioning = false;
+        delete machine.password;
+        await this.ctx.storage.put("provisioned", machine);
+        lease.restarting = bootId;
+        lease.readyBy = Date.now() + 600000;
+        await this.ctx.storage.put("lease", lease);
+        return reply({ ready: false, restarting: true });
+      }
       let ready = !!this.sockets && !lease.restarting;
       if (!ready) try {
         const health = await desktopFetch(machine, "/health");
@@ -260,7 +298,7 @@ export class VirtualPC extends DurableObject {
       return reply({ ready, restarting: !!lease.restarting });
     }
     if (action === "desktop") {
-      if (lease.restarting) return reply({ error: "Windows is restarting." }, 503);
+      if (lease.restarting || machine.provisioning) return reply({ error: "Windows is starting." }, 503);
       this.closeDesktop();
       const upstream = await desktopFetch(machine, "/desktop", { headers: { Upgrade: "websocket" } });
       if (upstream.status !== 101 || !upstream.webSocket) return reply({ error: "Windows is still starting. Please wait." }, 503);

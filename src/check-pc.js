@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { readFile } from "node:fs/promises";
 import { timingSafeEqual, createHash } from "node:crypto";
+import { provisioningConfig, newMachine, deploymentBody } from "./worker-provision.js";
 
 // Run the real account/lease implementation against SQLite; replace only cloud I/O.
 crypto.subtle.timingSafeEqual = timingSafeEqual;
 let state = "PowerState/deallocated", failStop = false, bootId = "boot-1";
 const powerCalls = [];
+let deploymentState = "Running", creations = 0;
+globalThis.pcTestProvision = { provisioningConfig, newMachine, provision: async (_env, _machine, create) => { if (create) creations++; return deploymentState; } };
 globalThis.pcTestPower = async (_env, _machine, action) => {
   powerCalls.push(action);
   if (action === "instanceView") return state;
@@ -19,7 +22,8 @@ globalThis.pcTestDesktop = async (_machine, path, options) => {
 };
 const source = (await readFile(new URL("worker-pc.js", import.meta.url), "utf8"))
   .replace('import { DurableObject } from "cloudflare:workers";', 'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }')
-  .replace('import { azurePower, desktopFetch } from "./worker-azure.js";', 'const azurePower = globalThis.pcTestPower; const desktopFetch = globalThis.pcTestDesktop;');
+  .replace('import { azurePower, desktopFetch } from "./worker-azure.js";', 'const azurePower = globalThis.pcTestPower; const desktopFetch = globalThis.pcTestDesktop;')
+  .replace('import { provisioningConfig, newMachine, provision } from "./worker-provision.js";', 'const { provisioningConfig, newMachine, provision } = globalThis.pcTestProvision;');
 const { pcApi, VirtualPC } = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
 const objects = new Map();
 const invitation = "1".repeat(32);
@@ -130,4 +134,47 @@ assert.deepEqual(remaining.map(item => item.status).sort(), [200,409]);
 const assigned = await objects.get(remaining[0].status === 200 ? "person_two" : "person_three").ctx.storage.get("machine");
 assert.equal(assigned, "pc-2");
 assert.equal(await pc.ctx.storage.get("machine"), "pc-1");
+env.PC_AZURE = JSON.stringify({ provisioning: { resourceGroup: "/subscriptions/test-sub/resourceGroups/test", location: "mexicocentral", maxPCs: 3, sourceRoot: "https://example.test/scripts" } });
+const fourth = await account("person_four"), fourthClient = crypto.randomUUID();
+const autoStart = await call("start", { client: fourthClient }, fourth);
+assert.equal(autoStart.status, 200);
+const autoLease = (await autoStart.json()).lease;
+assert.equal(creations, 1);
+assert.equal((await call("start", { client: fourthClient }, fourth)).status, 200);
+assert.equal(creations, 1); // Reloads/repeated clicks never create another VM for this account.
+const autoPC = objects.get("person_four"), autoMachine = await autoPC.machine();
+assert.match(autoMachine.id, /^pc-[a-f0-9]{12}$/);
+const template = deploymentBody(env, autoMachine);
+assert.equal(template.properties.template.parameters.password.type, "secureString");
+assert.equal(template.properties.template.parameters.command.type, "secureString");
+assert.ok(!JSON.stringify(template.properties.template).includes(autoMachine.password));
+assert.deepEqual(template.properties.template.resources.find(item => item.type.endsWith("networkSecurityGroups")).properties.securityRules[0].properties.destinationPortRanges, ["80", "443"]);
+assert.equal((await (await call("heartbeat", { lease: autoLease }, fourth)).json()).provisioning, true);
+const fifth = await account("person_five");
+assert.equal((await call("start", { client: crypto.randomUUID() }, fifth)).status, 409);
+deploymentState = "Succeeded";
+assert.equal((await (await call("heartbeat", { lease: autoLease }, fourth)).json()).restarting, true);
+assert.equal((await autoPC.machine()).password, undefined);
+bootId = "boot-after-provision";
+assert.equal((await (await call("heartbeat", { lease: autoLease }, fourth)).json()).ready, true);
+assert.equal((await upload(fourth, autoLease)).status, 200);
+assert.equal((await call("restart", { lease: autoLease }, first)).status, 401);
+env.PC_AZURE = JSON.stringify({ ...JSON.parse(env.PC_AZURE), provisioning: { ...provisioningConfig(env), maxPCs: 4 } });
+deploymentState = "Running";
+const pending = await call("start", { client: crypto.randomUUID() }, fifth);
+assert.equal(pending.status, 200);
+const pendingPC = objects.get("person_five"), pendingMachine = await pendingPC.machine();
+const pendingLease = await pendingPC.ctx.storage.get("lease");
+await pendingPC.ctx.storage.put("lease", { ...pendingLease, expires: Date.now() - 1 });
+await pendingPC.alarm();
+assert.equal((await pendingPC.machine()).provisioning, true);
+assert.equal((await pendingPC.ctx.storage.get("lease")).stopping, true);
+deploymentState = "Succeeded";
+await pendingPC.alarm(); await pendingPC.alarm();
+assert.equal(await pendingPC.ctx.storage.get("lease"), undefined);
+assert.equal((await pendingPC.machine()).password, undefined);
+const createdBeforeResume = creations;
+assert.equal((await call("start", { client: crypto.randomUUID() }, fifth)).status, 200);
+assert.equal((await pendingPC.machine()).id, pendingMachine.id);
+assert.equal(creations, createdBeforeResume);
 console.log("PC checks passed: automatic assignment, capacity limits, account isolation, simultaneous-tab exclusion, lease expiry, Azure retry, restart, upload authorization and logout.");
