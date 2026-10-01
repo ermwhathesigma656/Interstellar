@@ -225,7 +225,7 @@ export class VirtualPC extends DurableObject {
       const config = provisioningConfig(this.env);
       const automatic = !machine;
       if (!machine && config && owned.size < config.maxPCs) machine = { id: `pc-${random().slice(0,12)}` };
-      if (!machine) return reply({ error: "Azure's PC capacity has been reached. Your account can have one PC when the site owner adds capacity." }, 409);
+      if (!machine) return reply({ code: "PC_CAPACITY", error: "All PC slots on this website are assigned. Each account can have one PC, but the site's total hosting limit is full. Delete an unused PC from its owning account or ask the site owner to add capacity." }, 409);
       this.sql.exec("INSERT OR IGNORE INTO machine_claims VALUES (?, ?)", machine.id, username);
       return reply({ id: machine.id, automatic });
     }

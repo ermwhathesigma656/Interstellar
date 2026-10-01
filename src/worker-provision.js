@@ -6,11 +6,13 @@ export function newMachine(env, id) {
   const config = provisioningConfig(env);
   const hostname = `${id}-${config.resourceGroup.split("/")[2].slice(0,8)}.${config.location}.cloudapp.azure.com`;
   return { id, resourceId: `${config.resourceGroup}/providers/Microsoft.Compute/virtualMachines/${id}`,
-    url: `https://${hostname}`, key: random() + random(), password: `Pc!${random()}${random()}`, provisioning: true };
+    url: `https://${hostname}`, location: config.location, key: random() + random(), password: `Pc!${random()}${random()}`, provisioning: true };
 }
 
 export function deploymentBody(env, machine) {
-  const config = provisioningConfig(env), name = machine.id, location = config.location;
+  const config = provisioningConfig(env), name = machine.id;
+  // Existing PCs keep their region when the default for new PCs changes.
+  const location = machine.location || new URL(machine.url).hostname.split(".")[1];
   const resource = (provider, type, suffix = "") => `${config.resourceGroup}/providers/${provider}/${type}/${name}${suffix}`;
   const pip = resource("Microsoft.Network", "publicIPAddresses", "-ip");
   const nsg = resource("Microsoft.Network", "networkSecurityGroups", "-nsg");

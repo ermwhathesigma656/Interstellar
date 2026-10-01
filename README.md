@@ -102,7 +102,9 @@ unlimited free VM service. Run `npm run test:pc` for isolation and lifecycle che
 For automatic creation, put `resourceGroup` (full Azure resource ID), `location`,
 `maxPCs` (the total account/PC cap), and `sourceRoot` (an immutable Git commit's
 HTTPS scripts directory) in `.wrangler/pc-provisioning.json` before running the
-configuration script. The deployment uses secure parameters for Windows passwords
+configuration script. `location` is the region for new PCs; existing PCs keep their
+original region, including deployment retries. Validate the VM size and regional
+quota before changing it or raising the total cap. The deployment uses secure parameters for Windows passwords
 and gateway credentials, creates a separate network per PC, installs the gateway,
 and restarts Windows after the extension completes. A closed session is deallocated
 after any in-progress deployment finishes. Existing Windows image activation is
