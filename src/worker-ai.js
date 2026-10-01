@@ -1,5 +1,5 @@
 const MAX_BODY = 4 * 1024 * 1024;
-const MODEL = "qwen/qwen3.8-27b";
+const MODEL = "gpt-6-luna";
 
 function reply(body, status = 200, headers = {}) {
   return Response.json(body, { status, headers: { "Cache-Control": "no-store", ...headers } });
@@ -54,29 +54,29 @@ export async function chat(request, env) {
     return reply({ error: "Open AI from this website to send a message." }, 403);
   }
   if (!request.headers.get("Content-Type")?.startsWith("application/json")) return reply({ error: "Expected JSON." }, 415);
-  if (!env.GROQ_API_KEY || !env.AI_RATE_LIMITER) return reply({ error: "AI is not configured yet. Please contact the site owner." }, 503);
+  if (!env.OPENAI_API_KEY || !env.AI_RATE_LIMITER) return reply({ error: "AI is not configured yet. Please contact the site owner." }, 503);
   const { success } = await env.AI_RATE_LIMITER.limit({ key: request.headers.get("CF-Connecting-IP") || "local" });
   if (!success) return reply({ error: "Too many messages. Please wait a minute and try again." }, 429, { "Retry-After": "60" });
   let messages;
   try { messages = await readMessages(request); }
   catch (error) { return reply({ error: error instanceof SyntaxError ? "Invalid message data." : error.message }, 400); }
   try {
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
-      headers: { Authorization: `Bearer ${env.GROQ_API_KEY}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(60000)]),
       body: JSON.stringify({
         model: MODEL,
         messages: [{ role: "system", content: "You are Interstellar AI, a helpful assistant. Answer clearly and honestly. You can analyze attached images, but you cannot browse the web or take actions. Use plain text and fenced code blocks when useful." }, ...messages],
-        reasoning_effort: "none", max_completion_tokens: 2048, temperature: 0.7, stream: false,
+        reasoning_effort: "none", max_completion_tokens: 2048, stream: false,
       }),
     });
     if (!response.ok) {
       await response.body?.cancel();
-      if (response.status === 429) return reply({ error: "Groq's usage limit has been reached. Please try again later." }, 429);
-      if ([401, 403].includes(response.status)) return reply({ error: "Groq could not authorize this chat. The site owner needs to check the API key and model access." }, 503);
-      if (response.status === 400 || response.status === 413) return reply({ error: "Groq could not read this conversation. Try a smaller image or start a new chat." }, 400);
-      return reply({ error: "Groq is temporarily unavailable. Please try again." }, 502);
+      if (response.status === 429) return reply({ error: "The AI usage limit has been reached. Please try again later." }, 429);
+      if ([401, 403].includes(response.status)) return reply({ error: "The AI service could not authorize this chat. The site owner needs to check the API key and model access." }, 503);
+      if (response.status === 400 || response.status === 413) return reply({ error: "The AI service could not read this conversation. Try a smaller image or start a new chat." }, 400);
+      return reply({ error: "The AI service is temporarily unavailable. Please try again." }, 502);
     }
     const data = await response.json();
     const message = data.choices?.[0]?.message?.content;

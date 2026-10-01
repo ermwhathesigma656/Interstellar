@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { chat } from "./worker-ai.js";
 
 const origin = "https://interstellar.example";
-const env = { GROQ_API_KEY: "test-secret", AI_RATE_LIMITER: { limit: async () => ({ success: true }) } };
+const env = { OPENAI_API_KEY: "test-secret", AI_RATE_LIMITER: { limit: async () => ({ success: true }) } };
 const message = { role: "user", content: "Hello" };
 const request = (messages = [message], options = {}) => new Request(`${origin}/api/ai/chat`, {
   method: "POST", headers: { Origin: origin, "Content-Type": "application/json" },
@@ -13,10 +13,10 @@ let calls = 0;
 try {
   globalThis.fetch = async (url, options) => {
     calls++;
-    assert.equal(url, "https://api.groq.com/openai/v1/chat/completions");
+    assert.equal(url, "https://api.openai.com/v1/chat/completions");
     assert.equal(options.headers.Authorization, "Bearer test-secret");
     const body = JSON.parse(options.body);
-    assert.equal(body.model, "qwen/qwen3.8-27b");
+    assert.equal(body.model, "gpt-6-luna");
     assert.equal(body.messages[0].role, "system");
     assert.equal(body.max_completion_tokens, 2048);
     assert.equal(body.messages.at(-1).content[1].image_url.url, "data:image/png;base64,aGVsbG8=");
@@ -38,7 +38,7 @@ try {
   assert.equal((await chat(new Request(`${origin}/api/ai/chat`), env)).status, 405);
   assert.equal((await chat(request(), {})).status, 503);
   assert.equal((await chat(request(), { ...env, AI_RATE_LIMITER: { limit: async () => ({ success: false }) } })).status, 429);
-  assert.equal(calls, 1, "Invalid requests must never reach Groq");
+  assert.equal(calls, 1, "Invalid requests must never reach the AI service");
   globalThis.fetch = async () => Response.json({ error: { message: "private upstream details" } }, { status: 429 });
   const limited = await chat(request(), env);
   assert.equal(limited.status, 429);
