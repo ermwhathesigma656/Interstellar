@@ -8,7 +8,10 @@ import manifest from "../dist/.runtime/vendor-map.cjs";
 import { mountAnalytics } from "./analytics.js";
 import { proxyHTTP } from "./worker-http.js";
 import { chat } from "./worker-ai.js";
+import { pcApi } from "./worker-pc.js";
+import { pcIdentity } from "./worker-azure.js";
 export { DiscordAssets } from "./discord-assets.js";
+export { VirtualPC } from "./worker-pc.js";
 
 // Use the package's Node entry so its network filters remain available.
 const { server: wisp } = require("@mercuryworkshop/wisp-js/server");
@@ -113,6 +116,8 @@ export default {
     }
     const url = new URL(request.url);
     if (url.pathname === "/api/ai/chat") return chat(request, env);
+    if (url.pathname.startsWith("/api/pc/")) return pcApi(request, env);
+    if (["/.well-known/openid-configuration", "/pc-jwks.json"].includes(url.pathname)) return pcIdentity(url.pathname, env);
     if (url.pathname === "/http/") return proxyHTTP(request, env);
     if (url.pathname === "/worker-transport.json") return Response.json({ transport: "/worker-transport.mjs?v=1" });
     if (url.pathname === "/wisp/") return upgradeWisp(request);

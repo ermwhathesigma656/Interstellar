@@ -5,6 +5,7 @@ import path from "node:path";
 import chalk from "chalk";
 import JavaScriptObfuscator from "javascript-obfuscator";
 import { minify } from "terser";
+import { build as bundle } from "esbuild";
 import { injectVersionInfo, resolveVersionInfo, VERSION_TOKEN_COUNT } from "./version.js";
 
 const OBFUSCATOR_PROMO_PATTERN = /\[javascript-obfuscator\]|JavaScript Obfuscator Pro|obfuscator\.io/i;
@@ -687,7 +688,7 @@ function applyProxyChoiceValues(source) {
 // server, and rewrites the clean route literals in the application JS so the navbar and every
 // in-app navigation point at the same opaque paths. "/" (root) and "/play.html" (a compatibility
 // alias for the games page) are deliberately left clean and are not part of this map.
-const PAGE_ROUTES = ["/apps", "/games", "/tabs", "/settings", "/ai"];
+const PAGE_ROUTES = ["/apps", "/games", "/tabs", "/settings", "/ai", "/pc"];
 
 function createPageRoutes(registry) {
   const map = {};
@@ -714,13 +715,14 @@ function routeRewriteTable(routes) {
     [`"/./apps"`, `"${routes["/apps"]}"`],
     [`"/./settings"`, `"${routes["/settings"]}"`],
     [`"/./ai"`, `"${routes["/ai"]}"`],
+    [`"/./pc"`, `"${routes["/pc"]}"`],
     [`"/games"`, `"${routes["/games"]}"`],
     [`"/apps"`, `"${routes["/apps"]}"`],
     [`"/tabs"`, `"${routes["/tabs"]}"`],
     [`"tabs"`, `"${routes["/tabs"]}"`],
   ];
 }
-const ROUTE_REWRITE_COUNT = 12;
+const ROUTE_REWRITE_COUNT = 13;
 
 function applyRouteRewrites(source, table) {
   let count = 0;
@@ -1767,6 +1769,9 @@ async function build() {
 
   const emitted = new Map();
   const references = [];
+  const desktopClient = path.join(DIST_DIR, "pc-rfb.mjs");
+  await bundle({ entryPoints: ["@novnc/novnc"], outfile: desktopClient, bundle: true, format: "esm", minify: true });
+  emitted.set("/pc-rfb.mjs", desktopClient);
 
   for (const [source, publicPath] of jsonMoves) {
     const destination = path.join(DIST_DIR, publicPath);

@@ -51,17 +51,42 @@ Local settings and the standard Node deployment remain supported.
 the saved copies, and tests the login HTML, API, and gateway connection.
 
 The **AI** tab supports text conversations and JPEG, PNG, or WebP uploads through
-Groq's `qwen/qwen3.8-27b` vision model. On Cloudflare, add `GROQ_API_KEY` as a
+OpenAI's `gpt-6-luna` model. On Cloudflare, add `OPENAI_API_KEY` as a
 **Secret** under the Worker's Settings → Variables and Secrets, or run
-`npx wrangler secret put GROQ_API_KEY`. Never put the key in `static/` or Git.
-For local Workers development, put `GROQ_API_KEY="your-key"` in the ignored
+`npx wrangler secret put OPENAI_API_KEY`. Never put the key in `static/` or Git.
+For local Workers development, put `OPENAI_API_KEY="your-key"` in the ignored
 `.dev.vars` file beside the Wrangler config. Run `npm run test:ai` for the API checks.
 This endpoint runs on the Workers deployment, not the optional Node server.
 Chats stay in the current tab and send recent context plus up to three images to
-Groq. Uploads are resized before sending; no chat database is used. Requests are
-limited to ten per minute per IP at each Cloudflare location, plus Groq's account
-limits. These are best-effort abuse limits, not a billing cap. The Groq model is
-a preview model and may need updating when Groq retires it.
+OpenAI. Uploads are resized before sending; no chat database is used. Requests are
+limited to ten per minute per IP at each Cloudflare location, plus OpenAI's account
+limits. These are best-effort abuse limits, not a billing cap. The OpenAI model
+may need updating if OpenAI retires it.
+
+The **PC** tab connects to a real Windows 10 Azure VM using noVNC. Each account
+claims one pre-provisioned VM with a private, single-use activation code. Public
+sign-ups never create Azure resources. `VirtualPC` Durable Objects serialize
+session ownership: only one tab/device can control an account's PC. Closing the
+tab releases it; lost connections expire after 90 seconds. Durable Object alarms
+retry Azure deallocation until confirmed, and start requests wait for shutdown
+to finish. Windows files persist on the OS disk; save documents before leaving,
+because running applications and unsaved work do not survive shutdown.
+
+The Worker uses an Azure user-assigned managed identity with federated trust in
+its signing key and a resource-group-scoped role allowing only VM reads, starts,
+and deallocation. `PC_AZURE` and `PC_MACHINES` are **Worker secrets**. Only the
+public verification key is served by `/pc-jwks.json`. The guest runs TightVNC on
+loopback, a WebSocket bridge, and Caddy HTTPS. Azure exposes only ports 80/443;
+desktop requests also require a private gateway key injected by the Worker.
+
+Owner setup scripts live in `scripts/`: `create-pc.ps1`, `install-pc.ps1`, and
+`configure-pc.mjs`. Generated Windows passwords, activation codes, signing keys,
+and deployment inputs stay in the ignored `.wrangler` directory. After adding a
+VM, run `node scripts/configure-pc.mjs <all-vm-names>` and upload the resulting
+`.wrangler/pc-secrets.json` with `wrangler secret bulk`. Keep every existing VM in
+that list. Each added PC consumes Azure credits, including disk/IP charges while
+deallocated. Keep the Azure Students spending limit enabled. This is not an
+unlimited free VM service. Run `npm run test:pc` for isolation and lifecycle checks.
 
 > [!IMPORTANT]
 > You **cannot** deploy to static web hosts, including Netlify, Cloudflare Pages, and GitHub Pages.

@@ -108,6 +108,7 @@ document.addEventListener("DOMContentLoaded", () => {
         <a class="navbar-link" href="/./games"><i class="fa-solid fa-gamepad navbar-icon"></i><an>&#71;&#97;</an><an>&#109;&#101;&#115;</an></a>
         <a class="navbar-link" href="/./apps"><i class="fa-solid fa-phone navbar-icon"></i><an>&#65;&#112;</an><an>&#112;&#115;</an></a>
         <a class="navbar-link" href="/./ai"><i class="fa-solid fa-comment-dots navbar-icon" aria-hidden="true"></i>AI</a>
+        <a class="navbar-link" href="/./pc"><i class="fa-solid fa-desktop navbar-icon" aria-hidden="true"></i>PC</a>
         <a class="navbar-link" href="/./settings"><i class="fa-solid fa-gear navbar-icon settings-icon"></i><an>&#83;&#101;&#116;</an><an>&#116;&#105;&#110;&#103;</an></a>
       </div>`;
     nav.innerHTML = html;

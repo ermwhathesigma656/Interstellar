@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="referrer" content="no-referrer" />
+  <link rel="shortcut icon" id="tab-favicon" href="favicon.png" />
+  <title id="t">Interstellar PC</title>
+  <link rel="stylesheet" id="global" href="/assets/css/global.css" />
+  <link rel="stylesheet" href="/assets/css/nav.css" />
+  <link rel="stylesheet" href="/assets/css/pc.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+  <script src="/assets/js/storage.js"></script>
+  <script src="/assets/js/main.js"></script>
+  <script src="/assets/js/pc.js" defer></script>
+</head>
+<body>
+  <nav class="nav-bar" aria-label="Main navigation"></nav>
+  <main id="pc-shell">
+    <header id="pc-heading">
+      <div><h1>Interstellar PC</h1><p>Your Windows 10 desktop. One PC per account, one active tab at a time.</p></div>
+      <div id="pc-account" hidden><span id="pc-user"></span><button id="pc-logout" type="button">Sign out</button></div>
+    </header>
+
+    <section id="pc-auth" hidden aria-labelledby="pc-auth-title">
+      <h2 id="pc-auth-title">Sign in to your PC</h2>
+      <p>Sign in or create an account, then activate your Windows PC with a code from the site owner.</p>
+      <form id="pc-auth-form">
+        <label for="pc-username">Username</label>
+        <input id="pc-username" autocomplete="username" required minlength="3" maxlength="20" pattern="[A-Za-z0-9_]+" spellcheck="false" />
+        <label for="pc-password">Password</label>
+        <input id="pc-password" type="password" autocomplete="current-password" required minlength="8" maxlength="200" />
+        <div id="pc-auth-actions">
+          <button id="pc-login" type="submit">Sign in</button>
+          <button id="pc-signup" type="button">Create account</button>
+        </div>
+      </form>
+      <p id="pc-auth-note">Pick a password you don't use anywhere else. There's no password reset.</p>
+    </section>
+
+    <section id="pc-home" hidden aria-labelledby="pc-home-title">
+      <i class="fa-solid fa-desktop" aria-hidden="true"></i>
+      <h2 id="pc-home-title">Your PC</h2>
+      <p id="pc-save-info"></p>
+      <form id="pc-claim-form" hidden>
+        <label for="pc-code">PC activation code</label>
+        <input id="pc-code" autocomplete="off" maxlength="32" required />
+        <button id="pc-claim" type="submit">Activate my PC</button>
+      </form>
+      <div id="pc-home-actions">
+        <button id="pc-start" type="button"><span id="pc-start-label">Start my PC</span> <i class="fa-solid fa-power-off" aria-hidden="true"></i></button>
+      </div>
+      <p class="pc-footnote">Starting Windows may take a few minutes. Save your work in Windows before leaving. Closing this tab shuts the PC down; saved files stay on its disk. A lost connection is detected within 90 seconds.</p>
+    </section>
+
+    <section id="pc-machine" hidden aria-label="Your PC">
+      <div id="pc-toolbar">
+        <button id="pc-cad" type="button">Ctrl+Alt+Del</button>
+        <button id="pc-fullscreen" type="button"><i class="fa-solid fa-expand" aria-hidden="true"></i> Full screen</button>
+        <button id="pc-stop" type="button"><i class="fa-solid fa-power-off" aria-hidden="true"></i> Shut down</button>
+      </div>
+      <div id="pc-screen" tabindex="0" aria-label="Windows desktop"></div>
+    </section>
+
+    <p id="pc-status" role="status" aria-live="polite"></p>
+  </main>
+</body>
+</html>
