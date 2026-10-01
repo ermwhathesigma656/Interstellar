@@ -25,12 +25,23 @@
   const upload = document.getElementById("pc-upload");
   const fileInput = document.getElementById("pc-file");
   const transfer = document.getElementById("pc-transfer");
+  const confirmation = document.getElementById("pc-confirm");
+  const confirmationMessage = document.getElementById("pc-confirm-message");
+  const confirmationAccept = document.getElementById("pc-confirm-accept");
   const client = crypto.randomUUID();
   let me, lease, rfb, timer, handshake, uploading, busy = false, connecting = false, polling = false, restarting = false, failures = 0;
 
   function notice(text = "", error = false) { status.textContent = text; status.dataset.error = String(error); }
   function connectionNotice(text) { connection.textContent = text; connection.hidden = !text; if (text) notice(text); }
   function schedule(delay = 2000) { clearTimeout(timer); if (lease) timer = setTimeout(heartbeat, delay); }
+  async function confirmAction(message, label) {
+    if (confirmation.open) return false;
+    confirmationMessage.textContent = message; confirmationAccept.textContent = label;
+    confirmation.returnValue = "cancel";
+    const result = new Promise(resolve => confirmation.addEventListener("close", () => resolve(confirmation.returnValue === "ok"), { once: true }));
+    confirmation.showModal();
+    return result;
+  }
   function show() {
     account.hidden = !me;
     userLabel.textContent = me ? `Signed in as ${me.username}` : "";
@@ -156,10 +167,11 @@
   authForm.addEventListener("submit", event => { event.preventDefault(); authenticate("login"); });
   signup.addEventListener("click", () => authenticate("signup"));
   start.addEventListener("click", powerOn);
-  stop.addEventListener("click", () => { if (confirm("Save your work in Windows first. Shut down this PC now?")) release(); });
+  stop.addEventListener("click", async () => { if (await confirmAction("Save your work in Windows first. Shut down this PC now?", "Shut down")) release(); });
   reconnect.addEventListener("click", () => { disconnect(); connectionNotice("Reconnecting to Windows…"); schedule(0); });
   restart.addEventListener("click", async () => {
-    if (!lease || restarting || !confirm("Save your work in Windows first. Restart this PC now?")) return;
+    if (!lease || restarting || !await confirmAction("Save your work in Windows first. Restart this PC now?", "Restart")) return;
+    if (!lease || restarting) return;
     restarting = true; restart.disabled = true;
     disconnect(); connectionNotice("Restarting Windows…");
     try { await api("restart", { lease }); }
@@ -200,7 +212,7 @@
     else machine.requestFullscreen().catch(() => {});
   });
   logout.addEventListener("click", async () => {
-    if (lease && !confirm("Save your work in Windows first. Sign out and shut down your PC?")) return;
+    if (lease && !await confirmAction("Save your work in Windows first. Sign out and shut down your PC?", "Sign out")) return;
     await release();
     try { await api("logout", {}); me = null; show(); notice("Signed out."); } catch (error) { notice(error.message, true); }
   });

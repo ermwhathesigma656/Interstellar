@@ -68,6 +68,13 @@
     </section>
 
     <p id="pc-status" role="status" aria-live="polite"></p>
+    <dialog id="pc-confirm" aria-labelledby="pc-confirm-title">
+      <form method="dialog">
+        <h2 id="pc-confirm-title">Your Windows PC</h2>
+        <p id="pc-confirm-message"></p>
+        <div><button value="cancel" autofocus>Cancel</button><button id="pc-confirm-accept" value="ok">Continue</button></div>
+      </form>
+    </dialog>
   </main>
 </body>
 </html>
