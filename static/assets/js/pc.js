@@ -41,7 +41,7 @@
       ...(body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
     });
     const result = await response.json();
-    if (!response.ok) { const error = new Error(result.error || "Please try again."); error.status = response.status; throw error; }
+    if (!response.ok) { const error = new Error(result.error || "Please try again."); error.status = response.status; error.code = result.code; throw error; }
     return result;
   }
   async function refresh() {
@@ -115,7 +115,18 @@
     if (busy || lease) return;
     setBusy(true);
     notice("Starting your Windows PC…");
-    try { lease = (await api("start", { client })).lease; show(); heartbeat(); }
+    try {
+      const deadline = Date.now() + 300000;
+      for (;;) {
+        try { lease = (await api("start", { client })).lease; break; }
+        catch (error) {
+          if (error.code !== "PC_STOPPING" || Date.now() >= deadline) throw error;
+          notice("Finishing the previous shutdown. Windows will start automatically…");
+          await new Promise(resolve => setTimeout(resolve, 10000));
+        }
+      }
+      show(); heartbeat();
+    }
     catch (error) { notice(error.message, true); }
     finally { setBusy(false); }
   }

@@ -47,7 +47,7 @@ export async function pcApi(request, env) {
     try { body = text ? JSON.parse(text) : {}; } catch { return reply({ error: "Invalid request." }, 400); }
     if (!body || typeof body !== "object" || Array.isArray(body)) return reply({ error: "Invalid request." }, 400);
   }
-  if (["signup", "login", "claim", "start"].includes(action)) {
+  if (["signup", "login", "claim"].includes(action)) {
     const { success } = await env.PC_RATE_LIMITER.limit({ key: request.headers.get("CF-Connecting-IP") || "local" });
     if (!success) return reply({ error: "Too many attempts. Please wait a minute." }, 429);
   }
@@ -191,7 +191,8 @@ export class VirtualPC extends DurableObject {
       if (lease) {
         if (!lease.stopping && lease.expires > Date.now() && lease.session === token && lease.client === body.client) return reply({ lease: lease.id });
         if (lease.expires <= Date.now() && !lease.stopping) await this.stop();
-        return reply({ error: lease.stopping || lease.expires <= Date.now() ? "Your PC is shutting down. Please try again in a minute." : "Your PC is open in another tab or device. Close that session first." }, 409);
+        const stopping = lease.stopping || lease.expires <= Date.now();
+        return reply({ code: stopping ? "PC_STOPPING" : "PC_IN_USE", error: stopping ? "Waiting for your PC to finish shutting down…" : "Your PC is open in another tab or device. Close that session first." }, 409);
       }
       lease = { id: random(), session: token, client: body.client, expires: Date.now() + LEASE_MS, readyBy: Date.now() + 600000 };
       await this.ctx.storage.put("lease", lease);

@@ -64,7 +64,10 @@ const attempts = await Promise.all(clients.map(client => call("start", { client 
 assert.deepEqual(attempts.map(item => item.status).sort(), [200,409]);
 const winner = attempts.findIndex(item => item.status === 200);
 const { lease } = await attempts[winner].json();
+env.PC_RATE_LIMITER.limit = async () => ({ success: false });
 assert.equal((await (await call("start", { client: clients[winner] }, first)).json()).lease, lease);
+assert.equal((await call("login", { username: "person_one", password: "password-123" })).status, 429);
+env.PC_RATE_LIMITER.limit = async () => ({ success: true });
 assert.equal((await call("release", { lease }, second)).status, 409);
 assert.equal((await call("heartbeat", { lease: "bad" }, first)).status, 409);
 assert.equal((await call("heartbeat", { lease }, first)).status, 200);
@@ -76,7 +79,9 @@ await pc.ctx.storage.put("lease", { ...saved, expires: Date.now() - 1 });
 failStop = true;
 await pc.alarm();
 assert.equal((await pc.ctx.storage.get("lease")).stopping, true);
-assert.equal((await call("start", { client: crypto.randomUUID() }, first)).status, 409);
+const shuttingDown = await call("start", { client: crypto.randomUUID() }, first);
+assert.equal(shuttingDown.status, 409);
+assert.equal((await shuttingDown.json()).code, "PC_STOPPING");
 assert.ok(await pc.ctx.storage.get("alarm"));
 failStop = false;
 await pc.alarm(); // Deallocation accepted.
