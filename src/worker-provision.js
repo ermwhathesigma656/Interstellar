@@ -59,3 +59,52 @@ export async function provision(env, machine, create = false) {
   }
   return data.properties?.provisioningState || "Running";
 }
+
+// Save this inventory before deleting the VM: Azure otherwise loses its disk references.
+export async function deletionResources(env, machine) {
+  const group = provisioningConfig(env)?.resourceGroup;
+  const name = machine.id;
+  if (!group || !/^(pc-[a-f0-9]{12}|interstellar-pc-\d{2})$/.test(name)) throw new Error("Unknown PC resource layout");
+  const resource = (type, suffix = "") => `${group}/providers/${type}/${name}${suffix}`;
+  if (machine.resourceId.toLowerCase() !== resource("Microsoft.Compute/virtualMachines").toLowerCase()) throw new Error("PC is outside its configured resource group");
+  const vm = await azureRequest(env, `${machine.resourceId}?api-version=2024-07-01`);
+  if (!vm.ok && vm.status !== 404) throw new Error("Could not inspect the PC before deletion");
+  const properties = vm.ok ? (await vm.json()).properties : {};
+  const legacy = name.startsWith("interstellar-pc-");
+  const nic = resource("Microsoft.Network/networkInterfaces", legacy ? "VMNic" : "-nic");
+  if ((properties.networkProfile?.networkInterfaces || []).some(item => item.id.toLowerCase() !== nic.toLowerCase())) throw new Error("PC has an unexpected network interface");
+  let disks = [properties.storageProfile?.osDisk, ...(properties.storageProfile?.dataDisks || [])].filter(Boolean).map(item => item.managedDisk?.id);
+  const diskPrefix = `${group}/providers/Microsoft.Compute/disks/`.toLowerCase();
+  const ownedDisk = id => typeof id === "string" && id.toLowerCase().startsWith(diskPrefix) &&
+    new RegExp(`^${name}_OsDisk_[a-z0-9_]+$`, "i").test(id.slice(diskPrefix.length));
+  if (disks.some(id => !ownedDisk(id))) throw new Error("PC has an unexpected disk; deletion needs owner review");
+  if (vm.status === 404 || !disks.length) {
+    // Also clean disks left by an interrupted initial deployment or an externally removed VM.
+    const response = await azureRequest(env, `${group}/providers/Microsoft.Compute/disks?api-version=2024-03-02`);
+    if (!response.ok) throw new Error("Could not inspect saved PC disks");
+    const result = await response.json();
+    if (result.nextLink) throw new Error("Disk inventory needs owner review");
+    disks = result.value.filter(item => ownedDisk(item.id)).map(item => item.id);
+  }
+  return [
+    `${machine.resourceId}?api-version=2024-07-01`,
+    ...disks.map(id => `${id}?api-version=2024-03-02`),
+    `${nic}?api-version=2024-05-01`,
+    `${resource("Microsoft.Network/publicIPAddresses", legacy ? "PublicIP" : "-ip")}?api-version=2024-05-01`,
+    `${resource("Microsoft.Network/networkSecurityGroups", legacy ? "NSG" : "-nsg")}?api-version=2024-05-01`,
+    // The original PCs share a VNet. Only automatically created PCs have a dedicated one.
+    ...(!legacy ? [`${resource("Microsoft.Network/virtualNetworks", "-vnet")}?api-version=2024-05-01`] : []),
+  ];
+}
+
+export async function deleteResource(env, resource) {
+  const response = await azureRequest(env, resource);
+  if (response.status === 404) return true;
+  if (!response.ok) throw new Error("Could not check PC deletion");
+  const info = await response.json();
+  if (info.properties?.provisioningState === "Deleting") return false;
+  const removed = await azureRequest(env, resource, { method: "DELETE" });
+  if (!removed.ok && removed.status !== 404 && removed.status !== 409) throw new Error("Could not finish deleting PC resources");
+  // Accepted is not finished: retain ownership until a later GET confirms absence.
+  return false;
+}

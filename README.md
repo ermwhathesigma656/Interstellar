@@ -66,7 +66,16 @@ may need updating if OpenAI retires it.
 The **PC** tab connects to a real Windows 10 Azure VM using noVNC. Each account
 automatically claims one available VM on its first start. When automatic provisioning
 is configured, it creates a VM if none is available, up to the owner's total PC cap.
-Each account permanently owns one PC; repeated starts never create another.
+Each account owns one PC at a time; repeated starts never create another.
+**Delete my PC** asks for confirmation before permanently erasing its files, apps,
+and settings. The account remains, and can create a fresh PC after cleanup finishes.
+Deletion continues through Durable Object alarms even if the page closes, and retains
+the old assignment until the VM, disk and dedicated network resources are confirmed
+removed. Deleted preconfigured PCs are retired from the assignment pool. The original
+PCs' shared virtual network is retained. The Azure role needs `delete` permissions for
+`Microsoft.Compute/virtualMachines`, `Microsoft.Compute/disks`, and
+`Microsoft.Network/{networkInterfaces,publicIPAddresses,networkSecurityGroups,virtualNetworks}`
+within the same resource group; resource-group deletion is not required.
 `VirtualPC` Durable Objects serialize
 session ownership: only one tab/device can control an account's PC. Closing the
 tab releases it; lost connections expire after three minutes. Durable Object alarms
@@ -101,6 +110,8 @@ preserved; website users never enter a Windows key or a PC assignment code.
 
 The desktop reconnects automatically after an interrupted connection. Its toolbar
 provides Restart, Reconnect, Show desktop, picture quality and full-screen controls.
+Full screen includes noVNC's body-mounted fallback cursor; a visible dot is shown
+when Windows has not supplied a cursor image.
 Upload file / EXE streams files up to 50 MB into that PC's Windows Downloads folder;
 files are never automatically run or overwritten. The guest validates Windows
 filenames, removes interrupted transfers, and preserves Windows download marking.

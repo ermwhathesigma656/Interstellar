@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { azurePower, desktopFetch } from "./worker-azure.js";
-import { provisioningConfig, newMachine, provision } from "./worker-provision.js";
+import { provisioningConfig, newMachine, provision, deletionResources, deleteResource } from "./worker-provision.js";
 
 const SESSION_DAYS = 30;
 const LEASE_MS = 180000;
@@ -32,7 +32,7 @@ export async function pcApi(request, env) {
   }
   if (!env.VIRTUAL_PC || !env.PC_RATE_LIMITER) return reply({ error: "PCs are not configured yet." }, 503);
   const action = url.pathname.slice("/api/pc/".length);
-  const methods = { signup: "POST", login: "POST", logout: "POST", me: "GET", start: "POST", restart: "POST", upload: "POST", heartbeat: "POST", release: "POST", desktop: "GET" };
+  const methods = { signup: "POST", login: "POST", logout: "POST", me: "GET", start: "POST", delete: "POST", restart: "POST", upload: "POST", heartbeat: "POST", release: "POST", desktop: "GET" };
   if (!methods[action]) return reply({ error: "Not found." }, 404);
   if (request.method !== methods[action]) return reply({ error: `Use ${methods[action]}.` }, 405);
   let body = {};
@@ -104,7 +104,8 @@ export class VirtualPC extends DurableObject {
     this.sql = ctx.storage.sql;
     this.sql.exec(`CREATE TABLE IF NOT EXISTS account (id INTEGER PRIMARY KEY CHECK (id = 1), username TEXT, salt BLOB, hash TEXT, created INTEGER);
       CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, expires INTEGER);
-      CREATE TABLE IF NOT EXISTS machine_claims (machine TEXT PRIMARY KEY, username TEXT UNIQUE);`);
+      CREATE TABLE IF NOT EXISTS machine_claims (machine TEXT PRIMARY KEY, username TEXT UNIQUE);
+      CREATE TABLE IF NOT EXISTS retired_machines (machine TEXT PRIMARY KEY);`);
     // Existing ReactOS save tables remain intact; Windows uses its Azure disk.
   }
   async newSession() {
@@ -136,13 +137,14 @@ export class VirtualPC extends DurableObject {
     for (const ws of sockets || []) { try { ws.close(1000, "Desktop session ended"); } catch {} }
   }
   async stop() {
+    if (await this.ctx.storage.get("deletion")) return;
     this.closeDesktop();
     const lease = await this.ctx.storage.get("lease");
     if (lease) await this.ctx.storage.put("lease", { ...lease, expires: 0, stopping: true });
     // Retry until Azure confirms deallocation, so a transient error cannot strand a paid VM.
     await this.ctx.storage.setAlarm(Date.now() + 30000);
     const machine = await this.machine();
-    if (!machine) return;
+    if (!machine) { await this.ctx.storage.delete("lease"); await this.ctx.storage.deleteAlarm(); return; }
     if (machine.provisioning) {
       const state = await provision(this.env, machine);
       if (!["Succeeded", "Failed", "Canceled", "Missing"].includes(state)) return;
@@ -160,6 +162,17 @@ export class VirtualPC extends DurableObject {
   }
   async alarm() {
     await this.ctx.blockConcurrencyWhile(async () => {
+      const deletion = await this.ctx.storage.get("deletion");
+      if (deletion) {
+        await this.ctx.storage.setAlarm(Date.now() + 10000);
+        try { await this.removePC(deletion); }
+        catch (error) {
+          console.warn("PC deletion will retry", error.message);
+          await this.ctx.storage.put("deletion", { ...deletion, retrying: true });
+          await this.ctx.storage.setAlarm(Date.now() + 30000);
+        }
+        return;
+      }
       const lease = await this.ctx.storage.get("lease");
       if (lease && !lease.stopping && lease.expires > Date.now()) {
         await this.ctx.storage.setAlarm(lease.expires);
@@ -168,15 +181,47 @@ export class VirtualPC extends DurableObject {
       try { await this.stop(); } catch { await this.ctx.storage.setAlarm(Date.now() + 30000); }
     });
   }
+  async removePC(deletion) {
+    this.closeDesktop();
+    deletion.retrying = false;
+    const machine = deletion.machine;
+    if (machine.provisioning) {
+      const state = await provision(this.env, machine);
+      if (["Succeeded", "Failed", "Canceled", "Missing"].includes(state)) machine.provisioning = false;
+    } else if (!deletion.resources) {
+      deletion.resources = await deletionResources(this.env, machine);
+    } else if (deletion.resources.length) {
+      if (await deleteResource(this.env, deletion.resources[0])) deletion.resources.shift();
+    } else {
+      const response = await this.env.VIRTUAL_PC.getByName("!registry").fetch("https://pc/retire", {
+        method: "POST", body: JSON.stringify({ username: deletion.username, id: machine.id }),
+      });
+      if (!response.ok) throw new Error("Could not release deleted PC ownership");
+      await this.ctx.storage.put("lastDeleted", machine.id);
+      for (const key of ["machine", "provisioned", "lease", "deletion"]) await this.ctx.storage.delete(key);
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
+    await this.ctx.storage.put("deletion", deletion);
+  }
   async handle(request) {
     const action = new URL(request.url).pathname.slice(1);
-    // Internal only: pcApi never forwards this route. Each VM gets one permanent owner.
+    // Internal only: pcApi never forwards registry routes. One live VM per account.
+    if (action === "retire") {
+      const { username, id } = await request.json();
+      const claim = this.sql.exec("SELECT username FROM machine_claims WHERE machine = ?", id).toArray()[0];
+      if (claim && claim.username !== username) return reply({ error: "PC belongs to another account." }, 409);
+      this.sql.exec("INSERT OR IGNORE INTO retired_machines VALUES (?)", id);
+      this.sql.exec("DELETE FROM machine_claims WHERE machine = ? AND username = ?", id, username);
+      return reply({ ok: true });
+    }
     if (action === "assign") {
       const { username } = await request.json();
       const existing = this.sql.exec("SELECT machine FROM machine_claims WHERE username = ?", username).toArray()[0];
       if (existing) return reply({ id: existing.machine, automatic: !this.machines().some(item => item.id === existing.machine) });
       const owned = new Set(this.sql.exec("SELECT machine FROM machine_claims").toArray().map(item => item.machine));
-      let machine = this.machines().find(item => !owned.has(item.id));
+      const retired = new Set(this.sql.exec("SELECT machine FROM retired_machines").toArray().map(item => item.machine));
+      let machine = this.machines().find(item => !owned.has(item.id) && !retired.has(item.id));
       const config = provisioningConfig(this.env);
       const automatic = !machine;
       if (!machine && config && owned.size < config.maxPCs) machine = { id: `pc-${random().slice(0,12)}` };
@@ -203,13 +248,26 @@ export class VirtualPC extends DurableObject {
     if (!session || session.expires < Date.now()) return reply({ error: "Your sign-in expired. Please sign in again." }, 401);
     let machine = await this.machine();
     let lease = await this.ctx.storage.get("lease");
-    if (action === "me") return reply({ username: account.username, assigned: !!machine, busy: !!lease, stopping: !!lease?.stopping });
+    const deletion = await this.ctx.storage.get("deletion");
+    if (action === "me") return reply({ username: account.username, assigned: !!machine, pcId: machine?.id || null, busy: !!lease, stopping: !!lease?.stopping, deleting: !!deletion, deletionRetrying: !!deletion?.retrying });
     if (action === "logout") {
       if (lease?.session === token) await this.stop();
       this.sql.exec("DELETE FROM sessions WHERE token = ?", token);
       return reply({ ok: true });
     }
     const body = request.method === "POST" ? await request.json() : {};
+    if (action === "delete") {
+      if (body.confirm !== true || typeof body.pcId !== "string") return reply({ error: "Confirm that you want to permanently delete this PC and all its files." }, 400);
+      if (!machine && body.pcId === await this.ctx.storage.get("lastDeleted")) return reply({ deleting: false });
+      if (!machine || body.pcId !== machine.id) return reply({ error: "Your PC has changed. Reload the page before deleting it." }, 409);
+      if (!deletion) {
+        await this.ctx.storage.setAlarm(Date.now() + 1000);
+        await this.ctx.storage.put("deletion", { username: account.username, machine });
+        this.closeDesktop();
+      }
+      return reply({ deleting: true }, 202);
+    }
+    if (deletion) return reply({ code: "PC_DELETING", error: "Your PC is being deleted. You can create a new one when deletion finishes." }, 409);
     if (action === "start") {
       if (typeof body.client !== "string" || !/^[a-f0-9-]{36}$/.test(body.client)) return reply({ error: "Invalid desktop session." }, 400);
       if (!machine) {
@@ -222,7 +280,7 @@ export class VirtualPC extends DurableObject {
       }
       if (!machine) return reply({ error: "Your PC is temporarily unavailable. Contact the site owner." }, 503);
       if (lease) {
-        if (!lease.stopping && lease.expires > Date.now() && lease.session === token && lease.client === body.client) return reply({ lease: lease.id });
+        if (!lease.stopping && lease.expires > Date.now() && lease.session === token && lease.client === body.client) return reply({ lease: lease.id, pcId: machine.id });
         if (lease.expires <= Date.now() && !lease.stopping) await this.stop();
         const stopping = lease.stopping || lease.expires <= Date.now();
         return reply({ code: stopping ? "PC_STOPPING" : "PC_IN_USE", error: stopping ? "Waiting for your PC to finish shutting down…" : "Your PC is open in another tab or device. Close that session first." }, 409);
@@ -233,7 +291,7 @@ export class VirtualPC extends DurableObject {
       await this.ctx.storage.setAlarm(lease.expires);
       if (machine.provisioning) await provision(this.env, machine, true);
       else await azurePower(this.env, machine, "start");
-      return reply({ lease: lease.id });
+      return reply({ lease: lease.id, pcId: machine.id });
     }
     if (!machine) return reply({ error: "Start your PC first." }, 409);
     const leaseId = action === "desktop" ? request.headers.get("X-Lease") : body.lease;

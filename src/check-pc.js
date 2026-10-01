@@ -9,7 +9,13 @@ crypto.subtle.timingSafeEqual = timingSafeEqual;
 let state = "PowerState/deallocated", failStop = false, bootId = "boot-1";
 const powerCalls = [];
 let deploymentState = "Running", creations = 0;
-globalThis.pcTestProvision = { provisioningConfig, newMachine, provision: async (_env, _machine, create) => { if (create) creations++; return deploymentState; } };
+let deleteComplete = false, failDelete = false, inventories = 0;
+const deletedResources = [];
+globalThis.pcTestProvision = { provisioningConfig, newMachine,
+  provision: async (_env, _machine, create) => { if (create) creations++; return deploymentState; },
+  deletionResources: async (_env, machine) => { inventories++; return [`${machine.id}/vm`, `${machine.id}/disk`]; },
+  deleteResource: async (_env, resource) => { deletedResources.push(resource); if (failDelete) throw new Error("Simulated delete outage"); return deleteComplete; },
+};
 globalThis.pcTestPower = async (_env, _machine, action) => {
   powerCalls.push(action);
   if (action === "instanceView") return state;
@@ -23,7 +29,7 @@ globalThis.pcTestDesktop = async (_machine, path, options) => {
 const source = (await readFile(new URL("worker-pc.js", import.meta.url), "utf8"))
   .replace('import { DurableObject } from "cloudflare:workers";', 'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }')
   .replace('import { azurePower, desktopFetch } from "./worker-azure.js";', 'const azurePower = globalThis.pcTestPower; const desktopFetch = globalThis.pcTestDesktop;')
-  .replace('import { provisioningConfig, newMachine, provision } from "./worker-provision.js";', 'const { provisioningConfig, newMachine, provision } = globalThis.pcTestProvision;');
+  .replace('import { provisioningConfig, newMachine, provision, deletionResources, deleteResource } from "./worker-provision.js";', 'const { provisioningConfig, newMachine, provision, deletionResources, deleteResource } = globalThis.pcTestProvision;');
 const { pcApi, VirtualPC } = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
 const objects = new Map();
 const invitation = "1".repeat(32);
@@ -177,4 +183,111 @@ const createdBeforeResume = creations;
 assert.equal((await call("start", { client: crypto.randomUUID() }, fifth)).status, 200);
 assert.equal((await pendingPC.machine()).id, pendingMachine.id);
 assert.equal(creations, createdBeforeResume);
-console.log("PC checks passed: automatic assignment, capacity limits, account isolation, simultaneous-tab exclusion, lease expiry, Azure retry, restart, upload authorization and logout.");
+
+// Destructive actions need an explicit confirmation tied to the current PC, not just the account.
+assert.equal((await call("retire", { id: autoMachine.id }, fourth)).status, 404);
+assert.equal((await call("delete", { pcId: autoMachine.id }, fourth)).status, 400);
+assert.equal((await call("delete", { pcId: autoMachine.id, confirm: true }, fifth)).status, 409);
+assert.equal((await call("delete", { pcId: autoMachine.id, confirm: true }, fourth, { Origin: "https://evil.test" })).status, 403);
+assert.equal(await autoPC.ctx.storage.get("deletion"), undefined);
+const deleteRequest = { pcId: autoMachine.id, confirm: true };
+const duplicates = await Promise.all([call("delete", deleteRequest, fourth), call("delete", deleteRequest, fourth)]);
+assert.deepEqual(duplicates.map(result => result.status), [202,202]);
+assert.equal(inventories, 0); // Cloud cleanup runs in alarms, outside the confirmation request.
+assert.equal((await (await call("me", undefined, fourth)).json()).deleting, true);
+assert.equal((await (await call("start", { client: fourthClient }, fourth)).json()).code, "PC_DELETING");
+assert.equal((await call("heartbeat", { lease: autoLease }, fourth)).status, 409);
+assert.equal((await upload(fourth, autoLease)).status, 409);
+await autoPC.alarm();
+assert.equal(inventories, 1);
+failDelete = true; await autoPC.alarm();
+assert.equal((await (await call("me", undefined, fourth)).json()).deletionRetrying, true);
+assert.equal((await autoPC.machine()).id, autoMachine.id);
+failDelete = false; await autoPC.alarm();
+assert.equal((await autoPC.ctx.storage.get("deletion")).resources.length, 2);
+assert.equal((await call("logout", {}, fourth)).status, 200); // Signing out must not cancel deletion.
+assert.ok(await autoPC.ctx.storage.get("alarm"));
+deleteComplete = true;
+await autoPC.alarm();
+assert.equal((await autoPC.ctx.storage.get("deletion")).resources.length, 1);
+assert.equal((await autoPC.machine()).id, autoMachine.id); // Keep ownership until the disk is also gone.
+await autoPC.alarm(); await autoPC.alarm();
+assert.equal(await autoPC.machine(), undefined);
+assert.equal(await autoPC.ctx.storage.get("alarm"), undefined);
+assert.equal(await autoPC.ctx.storage.get("lease"), undefined);
+const signIn = async username => (await call("login", { username, password: "password-123" })).headers.get("Set-Cookie").split(";")[0];
+const fourthAgain = await signIn("person_four");
+assert.equal((await (await call("me", undefined, fourthAgain)).json()).assigned, false);
+assert.equal((await call("delete", deleteRequest, fourthAgain)).status, 200);
+const newAttempts = await Promise.all([1,2].map(() => call("start", { client: crypto.randomUUID() }, fourthAgain)));
+assert.deepEqual(newAttempts.map(result => result.status).sort(), [200,409]);
+assert.notEqual((await autoPC.machine()).id, autoMachine.id);
+assert.equal((await call("delete", deleteRequest, fourthAgain)).status, 409); // Delayed confirmation cannot erase a replacement.
+
+// A retired preconfigured machine must never be handed to any account again.
+const firstAgain = await signIn("person_one");
+assert.equal((await call("delete", { pcId: "pc-1", confirm: true }, firstAgain)).status, 202);
+for (let index = 0; index < 4; index++) await pc.alarm();
+assert.equal(await pc.machine(), undefined);
+assert.equal((await call("start", { client: crypto.randomUUID() }, firstAgain)).status, 200);
+assert.match((await pc.machine()).id, /^pc-[a-f0-9]{12}$/);
+assert.equal(objects.get("!registry").sql.exec("SELECT COUNT(*) AS count FROM machine_claims WHERE username = ?", "person_one").toArray()[0].count, 1);
+const sixth = await account("person_six");
+assert.equal((await call("start", { client: crypto.randomUUID() }, sixth)).status, 409);
+
+// Initial deployment must stop creating resources before its deletion inventory is captured.
+deploymentState = "Running";
+const replacement = await autoPC.machine(), previousInventories = inventories;
+assert.equal((await call("delete", { pcId: replacement.id, confirm: true }, fourthAgain)).status, 202);
+await autoPC.alarm();
+assert.equal(inventories, previousInventories);
+deploymentState = "Failed";
+for (let index = 0; index < 5; index++) await autoPC.alarm();
+assert.equal(await autoPC.machine(), undefined);
+assert.equal(await autoPC.ctx.storage.get("deletion"), undefined);
+assert.equal((await pendingPC.machine()).id, pendingMachine.id); // Other accounts are untouched.
+console.log("PC checks passed: account/session isolation, capacity, provisioning, power, uploads, confirmed deletion, cleanup retries, retired inventory and one replacement per account.");
+
+// Exercise the real Azure resource-selection and delete polling code with recorded cloud responses.
+let azureReplies = [], azureCalls = [];
+globalThis.pcTestAzureRequest = async (_env, resource, options = {}) => {
+  azureCalls.push({ resource, method: options.method || "GET" });
+  assert.ok(azureReplies.length, "Unexpected Azure request");
+  const [status, body = {}] = azureReplies.shift();
+  return Response.json(body, { status });
+};
+const cleanupSource = (await readFile(new URL("worker-provision.js", import.meta.url), "utf8"))
+  .replace('import { azureRequest } from "./worker-azure.js";', 'const azureRequest = globalThis.pcTestAzureRequest;');
+const cleanup = await import(`data:text/javascript;base64,${Buffer.from(cleanupSource).toString("base64")}`);
+const legacy = { id: "interstellar-pc-01", resourceId: `${provisioningConfig(env).resourceGroup}/providers/Microsoft.Compute/virtualMachines/interstellar-pc-01` };
+const diskId = `${provisioningConfig(env).resourceGroup.toUpperCase()}/providers/Microsoft.Compute/disks/interstellar-pc-01_OsDisk_1_abcdef`;
+azureReplies = [[200, { properties: { storageProfile: { osDisk: { managedDisk: { id: diskId } } } } }]];
+const resources = await cleanup.deletionResources(env, legacy);
+assert.equal(resources.length, 5);
+assert.equal(resources[1], `${diskId}?api-version=2024-03-02`);
+assert.match(resources[2], /interstellar-pc-01VMNic\?/);
+assert.equal(resources.some(resource => resource.includes("virtualNetworks")), false); // Legacy VNet is shared.
+const current = newMachine(env, "pc-123456789abc");
+const currentDisk = `${provisioningConfig(env).resourceGroup}/providers/Microsoft.Compute/disks/${current.id}_OsDisk_1_123abc`;
+azureReplies = [[404], [200, { value: [{ id: currentDisk }, { id: diskId }] }]];
+const partialResources = await cleanup.deletionResources(env, current);
+assert.ok(partialResources.includes(`${currentDisk}?api-version=2024-03-02`));
+assert.ok(!partialResources.includes(`${diskId}?api-version=2024-03-02`));
+assert.match(partialResources[2], /pc-123456789abc-nic\?/);
+azureReplies = [[200, { properties: {} }], [200, { value: [{ id: currentDisk }] }]];
+assert.ok((await cleanup.deletionResources(env, current)).includes(`${currentDisk}?api-version=2024-03-02`));
+await assert.rejects(cleanup.deletionResources(env, { ...legacy, resourceId: legacy.resourceId.replace("test-sub", "other-sub") }), /outside/);
+azureReplies = [[200, { properties: { storageProfile: { osDisk: { managedDisk: { id: `${diskId}-other/child` } } } } }]];
+await assert.rejects(cleanup.deletionResources(env, legacy), /unexpected disk/);
+azureReplies = [[200, { properties: { networkProfile: { networkInterfaces: [{ id: "/some-shared-nic" }] } } }]];
+await assert.rejects(cleanup.deletionResources(env, legacy), /unexpected network/);
+azureCalls = []; azureReplies = [[200], [202], [200, { properties: { provisioningState: "Deleting" } }], [404]];
+assert.equal(await cleanup.deleteResource(env, resources[0]), false);
+assert.equal(await cleanup.deleteResource(env, resources[0]), false);
+assert.equal(await cleanup.deleteResource(env, resources[0]), true);
+assert.equal(azureCalls.filter(call => call.method === "DELETE").length, 1);
+azureReplies = [[200], [409]];
+assert.equal(await cleanup.deleteResource(env, resources[1]), false);
+azureReplies = [[403]];
+await assert.rejects(cleanup.deleteResource(env, resources[1]), /Could not check/);
+console.log("Azure deletion checks passed: exact resource scope, legacy and partial deployments, persisted disk IDs, 202/404 confirmation and retryable conflicts.");

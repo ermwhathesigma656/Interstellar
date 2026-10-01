@@ -11,6 +11,8 @@
   const home = document.getElementById("pc-home");
   const info = document.getElementById("pc-save-info");
   const start = document.getElementById("pc-start");
+  const startLabel = document.getElementById("pc-start-label");
+  const deleteButton = document.getElementById("pc-delete");
   const logout = document.getElementById("pc-logout");
   const machine = document.getElementById("pc-machine");
   const screen = document.getElementById("pc-screen");
@@ -29,7 +31,7 @@
   const confirmationMessage = document.getElementById("pc-confirm-message");
   const confirmationAccept = document.getElementById("pc-confirm-accept");
   const client = crypto.randomUUID();
-  let me, lease, rfb, timer, handshake, uploading, busy = false, connecting = false, polling = false, restarting = false, failures = 0;
+  let me, lease, rfb, timer, homeTimer, handshake, uploading, busy = false, connecting = false, polling = false, restarting = false, failures = 0;
 
   function notice(text = "", error = false) { status.textContent = text; status.dataset.error = String(error); }
   function connectionNotice(text) { connection.textContent = text; connection.hidden = !text; if (text) notice(text); }
@@ -48,9 +50,14 @@
     auth.hidden = !!me;
     home.hidden = !me || !!lease;
     machine.hidden = !lease;
-    info.textContent = me?.assigned ? "Your saved files stay on this PC. Start Windows when you are ready." : "Start to claim your own Windows PC, while PCs are available. Your files stay separate from other accounts.";
+    if (!lease && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    info.textContent = me?.deleting ? (me.deletionRetrying ? "Deletion is taking longer than expected. Retrying automatically; your replacement PC will be available after cleanup finishes." : "Permanently deleting your PC and its files. This may take a few minutes. You can close this page; deletion will continue.") : me?.assigned ? "Your saved files stay on this PC. You can delete it to start over with a fresh Windows PC." : "Create your own Windows PC, while capacity is available. Each account can have one PC at a time. Your files stay separate from other accounts.";
+    startLabel.textContent = me?.deleting ? "Deleting PC…" : me?.assigned ? "Start my PC" : "Create my PC";
+    start.disabled = busy || !!me?.deleting;
+    deleteButton.hidden = !me?.assigned;
+    deleteButton.disabled = busy || !!me?.deleting;
   }
-  function setBusy(value) { busy = value; for (const button of [login, signup, start, logout]) button.disabled = value; }
+  function setBusy(value) { busy = value; for (const button of [login, signup, logout]) button.disabled = value; show(); }
   async function api(action, body) {
     const response = await fetch(`/api/pc/${action}`, {
       credentials: "same-origin", signal: AbortSignal.timeout(25000),
@@ -61,8 +68,14 @@
     return result;
   }
   async function refresh() {
-    try { me = await api("me"); } catch (error) { me = null; if (error.status !== 401) notice(error.message, true); }
+    clearTimeout(homeTimer);
+    const wasDeleting = me?.deleting;
+    try {
+      me = await api("me");
+      if (wasDeleting && !me.deleting && !me.assigned) notice("Your PC was deleted. Your account is still here. Choose Create my PC for a fresh Windows installation.");
+    } catch (error) { if (error.status === 401) me = null; else notice(error.message, true); }
     show();
+    if (me?.deleting) homeTimer = setTimeout(refresh, 5000);
   }
   async function authenticate(action) {
     if (busy || !authForm.reportValidity()) return;
@@ -104,6 +117,7 @@
       desktop.scaleViewport = true;
       desktop.clipViewport = false;
       desktop.resizeSession = true;
+      desktop.showDotCursor = true;
       desktop.qualityLevel = Number(quality.value);
       desktop.compressionLevel = 2;
       desktop.background = "#000";
@@ -136,6 +150,7 @@
       else connectionNotice(result.provisioning ? "Creating your personal Windows PC. First-time setup can take 10–20 minutes…" : result.restarting ? "Windows is restarting. Reconnecting automatically…" : "Windows is starting. This can take a few minutes…");
     } catch (error) {
       if (lease !== current) return;
+      if (error.code === "PC_DELETING") { lease = null; uploading?.abort(); disconnect(); await refresh(); return; }
       failures++;
       if ([401,409].includes(error.status) || failures >= 4) {
         await release();
@@ -146,13 +161,13 @@
     } finally { polling = false; if (lease === current) schedule(rfb ? 20000 : 3000); }
   }
   async function powerOn() {
-    if (busy || lease) return;
+    if (busy || lease || me?.deleting) return;
     setBusy(true);
     notice("Starting your Windows PC…");
     try {
       const deadline = Date.now() + 300000;
       for (;;) {
-        try { lease = (await api("start", { client })).lease; break; }
+        try { const result = await api("start", { client }); lease = result.lease; me.pcId = result.pcId; break; }
         catch (error) {
           if (error.code !== "PC_STOPPING" || Date.now() >= deadline) throw error;
           notice("Finishing the previous shutdown. Windows will start automatically…");
@@ -161,12 +176,27 @@
       }
       me.assigned = true; connectionNotice("Starting Windows…"); show(); heartbeat();
     }
-    catch (error) { notice(error.message, true); }
+    catch (error) { notice(error.message, true); if (error.code === "PC_DELETING") await refresh(); }
     finally { setBusy(false); }
   }
   authForm.addEventListener("submit", event => { event.preventDefault(); authenticate("login"); });
   signup.addEventListener("click", () => authenticate("signup"));
   start.addEventListener("click", powerOn);
+  deleteButton.addEventListener("click", async () => {
+    if (busy || !me?.pcId || me.deleting) return;
+    const pcId = me.pcId;
+    if (!await confirmAction("Are you sure you want to permanently delete your PC? All files, installed apps, and settings on it will be erased and cannot be recovered. Your account stays. After deletion finishes, you can create one new PC.", "Delete permanently")) return;
+    if (busy || me?.pcId !== pcId || me.deleting) return;
+    setBusy(true);
+    try {
+      const result = await api("delete", { pcId, confirm: true });
+      lease = null; clearTimeout(timer); uploading?.abort(); disconnect();
+      me.deleting = result.deleting;
+      notice("Deleting your PC. You can create a fresh one after deletion finishes.");
+      await refresh();
+    } catch (error) { notice(error.message, true); await refresh(); }
+    finally { setBusy(false); }
+  });
   stop.addEventListener("click", async () => { if (await confirmAction("Save your work in Windows first. Shut down this PC now?", "Shut down")) release(); });
   reconnect.addEventListener("click", () => { disconnect(); connectionNotice("Reconnecting to Windows…"); schedule(0); });
   restart.addEventListener("click", async () => {
@@ -209,7 +239,12 @@
   cad.addEventListener("click", () => rfb?.sendCtrlAltDel());
   fullscreen.addEventListener("click", () => {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-    else machine.requestFullscreen().catch(() => {});
+    // noVNC's fallback pointer is attached to body, outside the desktop container.
+    else document.documentElement.requestFullscreen().catch(() => {});
+  });
+  document.addEventListener("fullscreenchange", () => {
+    fullscreen.textContent = document.fullscreenElement ? "Exit full screen" : "Full screen";
+    rfb?.focus();
   });
   logout.addEventListener("click", async () => {
     if (lease && !await confirmAction("Save your work in Windows first. Sign out and shut down your PC?", "Sign out")) return;
@@ -219,7 +254,7 @@
   addEventListener("pagehide", () => {
     if (lease) navigator.sendBeacon("/api/pc/release", new Blob([JSON.stringify({ lease })], { type: "application/json" }));
     lease = null; disconnect();
-    clearTimeout(timer); uploading?.abort();
+    clearTimeout(timer); clearTimeout(homeTimer); uploading?.abort();
   });
   addEventListener("online", () => schedule(0));
   document.addEventListener("visibilitychange", () => { if (!document.hidden) schedule(0); });
