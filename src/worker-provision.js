@@ -6,7 +6,7 @@ export function newMachine(env, id) {
   const config = provisioningConfig(env);
   const hostname = `${id}-${config.resourceGroup.split("/")[2].slice(0,8)}.${config.location}.cloudapp.azure.com`;
   return { id, resourceId: `${config.resourceGroup}/providers/Microsoft.Compute/virtualMachines/${id}`,
-    url: `https://${hostname}`, location: config.location, key: random() + random(), password: `Pc!${random()}${random()}`, provisioning: true };
+    url: `https://${hostname}`, location: config.location, key: random() + random(), password: `Pc!${random()}${random()}`, provisioning: true, firstBootLogin: true };
 }
 
 export function deploymentBody(env, machine) {
@@ -21,6 +21,14 @@ export function deploymentBody(env, machine) {
   const setup = Buffer.from(JSON.stringify({ hostname: new URL(machine.url).hostname, gatewayKey: machine.key, username: "pcadmin", password: machine.password })).toString("base64");
   const script = `$ErrorActionPreference='Stop'; New-Item -ItemType Directory -Force C:\\Interstellar | Out-Null; [IO.File]::WriteAllBytes('C:\\Interstellar\\setup.json',[Convert]::FromBase64String('${setup}')); Copy-Item -LiteralPath .\\pc-gateway.cjs -Destination C:\\Interstellar\\pc-gateway.cjs -Force; Copy-Item -LiteralPath .\\setup-pc.ps1 -Destination C:\\Interstellar\\setup.ps1 -Force; & C:\\Interstellar\\setup.ps1`;
   const command = `powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${Buffer.from(script, "utf16le").toString("base64")}`;
+  // Enter this VM's own desktop during initial setup instead of rebooting after installation.
+  const firstLogon = "$p='HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\OOBE'; New-Item $p -Force | Out-Null; New-ItemProperty $p DisablePrivacyExperience -Value 1 -PropertyType DWord -Force | Out-Null";
+  const additionalUnattendContent = machine.firstBootLogin ? [
+    { passName: "OobeSystem", componentName: "Microsoft-Windows-Shell-Setup", settingName: "AutoLogon",
+      content: "[concat('<AutoLogon><Password><Value>',parameters('password'),'</Value><PlainText>true</PlainText></Password><Enabled>true</Enabled><LogonCount>1</LogonCount><Username>pcadmin</Username></AutoLogon>')]" },
+    { passName: "OobeSystem", componentName: "Microsoft-Windows-Shell-Setup", settingName: "FirstLogonCommands",
+      content: `<FirstLogonCommands><SynchronousCommand wcm:action="add" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"><Order>1</Order><CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${Buffer.from(firstLogon, "utf16le").toString("base64")}</CommandLine><Description>Prepare desktop</Description></SynchronousCommand></FirstLogonCommands>` },
+  ] : undefined;
   return { properties: { mode: "Incremental", parameters: { password: { value: machine.password }, command: { value: command } }, template: {
     $schema: "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#", contentVersion: "1.0.0.0",
     parameters: { password: { type: "secureString" }, command: { type: "secureString" } },
@@ -36,7 +44,7 @@ export function deploymentBody(env, machine) {
         properties: { networkSecurityGroup: { id: nsg }, ipConfigurations: [{ name: "primary", properties: { privateIPAllocationMethod: "Dynamic", publicIPAddress: { id: pip }, subnet: { id: `${vnet}/subnets/desktop` } } }] } },
       { type: "Microsoft.Compute/virtualMachines", apiVersion: "2024-07-01", name, location, dependsOn: [nic], tags: { project: "Interstellar" }, properties: {
         hardwareProfile: { vmSize: "Standard_B2as_v2" }, licenseType: "Windows_Client",
-        osProfile: { computerName: "InterstellarPC", adminUsername: "pcadmin", adminPassword: "[parameters('password')]", windowsConfiguration: { provisionVMAgent: true, enableAutomaticUpdates: true } },
+        osProfile: { computerName: "InterstellarPC", adminUsername: "pcadmin", adminPassword: "[parameters('password')]", windowsConfiguration: { provisionVMAgent: true, enableAutomaticUpdates: true, additionalUnattendContent } },
         storageProfile: { imageReference: { publisher: "MicrosoftWindowsDesktop", offer: "Windows-10", sku: "win10-22h2-pro-g2", version: "latest" },
           osDisk: { createOption: "FromImage", managedDisk: { storageAccountType: "StandardSSD_LRS" }, deleteOption: "Detach" } },
         networkProfile: { networkInterfaces: [{ id: nic }] }, securityProfile: { securityType: "TrustedLaunch", uefiSettings: { secureBootEnabled: true, vTpmEnabled: true } },

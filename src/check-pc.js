@@ -6,7 +6,7 @@ import { provisioningConfig, newMachine, deploymentBody } from "./worker-provisi
 
 // Run the real account/lease implementation against SQLite; replace only cloud I/O.
 crypto.subtle.timingSafeEqual = timingSafeEqual;
-let state = "PowerState/deallocated", failStop = false, bootId = "boot-1";
+let state = "PowerState/deallocated", failStop = false, bootId = "boot-1", gatewayReady = true;
 const powerCalls = [];
 let deploymentState = "Running", creations = 0;
 let deleteComplete = false, failDelete = false, inventories = 0;
@@ -24,6 +24,7 @@ globalThis.pcTestPower = async (_env, _machine, action) => {
 };
 globalThis.pcTestDesktop = async (_machine, path, options) => {
   if (path === "/upload") { await new Response(options.body).arrayBuffer(); return Response.json({ name: "test.exe" }); }
+  if (!gatewayReady) return new Response(null, { status: 503 });
   return Response.json({ bootId });
 };
 const source = (await readFile(new URL("worker-pc.js", import.meta.url), "utf8"))
@@ -157,8 +158,11 @@ assert.equal(regionalMachine.location, "northcentralus");
 assert.match(regionalMachine.url, /\.northcentralus\.cloudapp\.azure\.com$/);
 assert.ok(deploymentBody(anotherRegion, regionalMachine).properties.template.resources.every(item => item.location === "northcentralus"));
 assert.ok(deploymentBody(anotherRegion, autoMachine).properties.template.resources.every(item => item.location === "mexicocentral"));
-const oldMachine = { ...autoMachine }; delete oldMachine.location;
+const oldMachine = { ...autoMachine }; delete oldMachine.location; delete oldMachine.firstBootLogin;
 assert.ok(deploymentBody(anotherRegion, oldMachine).properties.template.resources.every(item => item.location === "mexicocentral"));
+const windowsConfig = body => body.properties.template.resources.find(item => item.type === "Microsoft.Compute/virtualMachines").properties.osProfile.windowsConfiguration;
+assert.deepEqual(windowsConfig(template).additionalUnattendContent.map(item => item.settingName), ["AutoLogon", "FirstLogonCommands"]);
+assert.equal(windowsConfig(deploymentBody(env, oldMachine)).additionalUnattendContent, undefined);
 assert.equal(template.properties.template.parameters.password.type, "secureString");
 assert.equal(template.properties.template.parameters.command.type, "secureString");
 assert.ok(!JSON.stringify(template.properties.template).includes(autoMachine.password));
@@ -169,8 +173,17 @@ const atCapacity = await call("start", { client: crypto.randomUUID() }, fifth);
 assert.equal(atCapacity.status, 409);
 assert.equal((await atCapacity.json()).code, "PC_CAPACITY");
 deploymentState = "Succeeded";
-assert.equal((await (await call("heartbeat", { lease: autoLease }, fourth)).json()).restarting, true);
+const restartsBeforeSetup = powerCalls.filter(action => action === "restart").length;
+gatewayReady = false;
+assert.deepEqual(await (await call("heartbeat", { lease: autoLease }, fourth)).json(), { ready: false, restarting: false });
+gatewayReady = true;
+assert.deepEqual(await (await call("heartbeat", { lease: autoLease }, fourth)).json(), { ready: true, restarting: false });
+assert.equal(powerCalls.filter(action => action === "restart").length, restartsBeforeSetup);
 assert.equal((await autoPC.machine()).password, undefined);
+// Deployments created by an earlier worker still need their one-time login restart.
+await autoPC.ctx.storage.put("provisioned", oldMachine);
+assert.equal((await (await call("heartbeat", { lease: autoLease }, fourth)).json()).restarting, true);
+assert.equal(powerCalls.filter(action => action === "restart").length, restartsBeforeSetup + 1);
 bootId = "boot-after-provision";
 assert.equal((await (await call("heartbeat", { lease: autoLease }, fourth)).json()).ready, true);
 assert.equal((await upload(fourth, autoLease)).status, 200);

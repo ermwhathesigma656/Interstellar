@@ -147,7 +147,7 @@
       if (lease !== current) return;
       failures = 0;
       if (result.ready) await connectDesktop(current);
-      else connectionNotice(result.provisioning ? "Creating your personal Windows PC. First-time setup can take 10–20 minutes…" : result.restarting ? "Windows is restarting. Reconnecting automatically…" : "Windows is starting. This can take a few minutes…");
+      else connectionNotice(result.provisioning ? "Creating your personal Windows PC. First-time setup takes several minutes; keep this page open…" : result.restarting ? "Windows is restarting. Reconnecting automatically…" : "Windows is starting. This can take a few minutes…");
     } catch (error) {
       if (lease !== current) return;
       if (error.code === "PC_DELETING") { lease = null; uploading?.abort(); disconnect(); await refresh(); return; }

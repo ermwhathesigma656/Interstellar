@@ -330,16 +330,18 @@ export class VirtualPC extends DurableObject {
           if (state === "Missing") await provision(this.env, machine, true);
           return reply({ ready: false, provisioning: true });
         }
-        let bootId = "unavailable";
-        try { bootId = (await (await desktopFetch(machine, "/health")).json()).bootId || bootId; } catch {}
-        await azurePower(this.env, machine, "restart");
+        if (!machine.firstBootLogin) {
+          let bootId = "unavailable";
+          try { bootId = (await (await desktopFetch(machine, "/health")).json()).bootId || bootId; } catch {}
+          await azurePower(this.env, machine, "restart");
+          lease.restarting = bootId;
+        }
         machine.provisioning = false;
         delete machine.password;
         await this.ctx.storage.put("provisioned", machine);
-        lease.restarting = bootId;
         lease.readyBy = Date.now() + 600000;
         await this.ctx.storage.put("lease", lease);
-        return reply({ ready: false, restarting: true });
+        if (lease.restarting) return reply({ ready: false, restarting: true });
       }
       let ready = !!this.sockets && !lease.restarting;
       if (!ready) try {
