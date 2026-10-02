@@ -51,7 +51,7 @@
     home.hidden = !me || !!lease;
     machine.hidden = !lease;
     if (!lease && document.fullscreenElement) document.exitFullscreen().catch(() => {});
-    info.textContent = me?.deleting ? (me.deletionRetrying ? "Deletion is taking longer than expected. Retrying automatically; your replacement PC will be available after cleanup finishes." : "Permanently deleting your PC and its files. This may take a few minutes. You can close this page; deletion will continue.") : me?.assigned ? "Your saved files stay on this PC. You can delete it to start over with a fresh Windows PC." : "Create your own Windows PC, while capacity is available. Each account can have one PC at a time. Your files stay separate from other accounts.";
+    info.textContent = me?.deleting ? (me.deletionRetrying ? "Deletion is taking longer than expected. Retrying automatically; your replacement PC will be available after cleanup finishes." : "Permanently deleting your PC and its files. This may take a few minutes. You can close this page; deletion will continue.") : me?.assigned ? "Your files, installed apps and settings are saved. When you leave, the running PC is removed; starting again restores your saved Windows disk. Delete permanently only if you want to erase everything." : "Create your own Windows PC, while saved-PC storage is available. Each account can have one PC. Your saved files, apps and settings stay separate from other accounts.";
     startLabel.textContent = me?.deleting ? "Deleting PC…" : me?.assigned ? "Start my PC" : "Create my PC";
     start.disabled = busy || !!me?.deleting;
     deleteButton.hidden = !me?.assigned;
@@ -147,7 +147,7 @@
       if (lease !== current) return;
       failures = 0;
       if (result.ready) await connectDesktop(current);
-      else connectionNotice(result.provisioning ? "Creating your personal Windows PC. First-time setup takes several minutes; keep this page open…" : result.restarting ? "Windows is restarting. Reconnecting automatically…" : "Windows is starting. This can take a few minutes…");
+      else connectionNotice(result.restoring ? "Restoring your saved Windows PC, apps and files…" : result.provisioning ? "Creating your personal Windows PC. First-time setup takes several minutes; keep this page open…" : result.restarting ? "Windows is restarting. Reconnecting automatically…" : "Windows is starting. This can take a few minutes…");
     } catch (error) {
       if (lease !== current) return;
       if (error.code === "PC_DELETING") { lease = null; uploading?.abort(); disconnect(); await refresh(); return; }

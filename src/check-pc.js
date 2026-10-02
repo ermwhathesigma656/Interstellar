@@ -10,11 +10,18 @@ let state = "PowerState/deallocated", failStop = false, bootId = "boot-1", gatew
 const powerCalls = [];
 let deploymentState = "Running", creations = 0;
 let deleteComplete = false, failDelete = false, inventories = 0;
+let suspendComplete = true, failSuspend = false, resumeState = "Succeeded", restores = 0;
 const deletedResources = [];
 globalThis.pcTestProvision = { provisioningConfig, newMachine,
   provision: async (_env, _machine, create) => { if (create) creations++; return deploymentState; },
   deletionResources: async (_env, machine) => { inventories++; return [`${machine.id}/vm`, `${machine.id}/disk`]; },
-  deleteResource: async (_env, resource) => { deletedResources.push(resource); if (failDelete) throw new Error("Simulated delete outage"); return deleteComplete; },
+  saveMachine: async (_env, machine) => ({ disk: machine.id }),
+  restoreMachine: async (_env, machine, saved) => { assert.equal(saved.disk, machine.id); restores++; state = "PowerState/running"; },
+  machineState: async () => resumeState,
+  deleteResource: async (_env, resource) => {
+    if (resource.endsWith("?api-version=2024-07-01")) { if (failSuspend) throw new Error("Simulated suspend outage"); return suspendComplete; }
+    deletedResources.push(resource); if (failDelete) throw new Error("Simulated delete outage"); return deleteComplete;
+  },
 };
 globalThis.pcTestPower = async (_env, _machine, action) => {
   powerCalls.push(action);
@@ -30,7 +37,7 @@ globalThis.pcTestDesktop = async (_machine, path, options) => {
 const source = (await readFile(new URL("worker-pc.js", import.meta.url), "utf8"))
   .replace('import { DurableObject } from "cloudflare:workers";', 'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }')
   .replace('import { azurePower, desktopFetch } from "./worker-azure.js";', 'const azurePower = globalThis.pcTestPower; const desktopFetch = globalThis.pcTestDesktop;')
-  .replace('import { provisioningConfig, newMachine, provision, deletionResources, deleteResource } from "./worker-provision.js";', 'const { provisioningConfig, newMachine, provision, deletionResources, deleteResource } = globalThis.pcTestProvision;');
+  .replace('import { provisioningConfig, newMachine, provision, deletionResources, deleteResource, saveMachine, restoreMachine, machineState } from "./worker-provision.js";', 'const { provisioningConfig, newMachine, provision, deletionResources, deleteResource, saveMachine, restoreMachine, machineState } = globalThis.pcTestProvision;');
 const { pcApi, VirtualPC } = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
 const objects = new Map();
 const invitation = "1".repeat(32);
@@ -128,10 +135,13 @@ await pc.alarm(); // Deallocation accepted.
 await pc.alarm(); // Deallocation confirmed.
 assert.equal(await pc.ctx.storage.get("lease"), undefined);
 assert.equal(await pc.ctx.storage.get("alarm"), undefined);
+assert.equal(await pc.ctx.storage.get("parked"), true);
+assert.deepEqual(await pc.ctx.storage.get("savedVM"), { disk: "pc-1" });
 assert.equal((await call("heartbeat", { lease }, first)).status, 409);
 const restarted = await call("start", { client: crypto.randomUUID() }, first);
 assert.equal(restarted.status, 200);
 assert.notEqual((await restarted.json()).lease, lease);
+assert.equal(restores, 1);
 assert.equal((await call("logout", {}, first)).status, 200);
 assert.equal((await call("me", undefined, first)).status, 401);
 env.PC_MACHINES = JSON.stringify([{ id: "pc-1" }, { id: "pc-2" }]);
@@ -269,12 +279,40 @@ for (let index = 0; index < 5; index++) await autoPC.alarm();
 assert.equal(await autoPC.machine(), undefined);
 assert.equal(await autoPC.ctx.storage.get("deletion"), undefined);
 assert.equal((await pendingPC.machine()).id, pendingMachine.id); // Other accounts are untouched.
+
+// Closing a restored PC keeps its disk ownership; removal failures cannot create a second VM.
+const pendingCurrent = await pendingPC.ctx.storage.get("lease");
+await call("heartbeat", { lease: pendingCurrent.id }, fifth);
+assert.equal(await pendingPC.ctx.storage.get("savedVM"), undefined);
+suspendComplete = false;
+await call("release", { lease: pendingCurrent.id }, fifth);
+await pendingPC.alarm();
+assert.equal((await pendingPC.ctx.storage.get("lease")).stopping, true);
+assert.equal((await call("start", { client: crypto.randomUUID() }, fifth)).status, 409);
+assert.equal((await pendingPC.ctx.storage.get("savedVM")).disk, pendingMachine.id);
+failSuspend = true; await pendingPC.alarm();
+assert.ok(await pendingPC.ctx.storage.get("alarm"));
+failSuspend = false; suspendComplete = true; await pendingPC.alarm();
+assert.equal(await pendingPC.ctx.storage.get("parked"), true);
+assert.equal(objects.get("!registry").assignedAccounts().find(row => row.username === "person_five").machine, pendingMachine.id);
+resumeState = "Updating";
+const restored = await (await call("start", { client: crypto.randomUUID() }, fifth)).json();
+assert.equal(restored.pcId, pendingMachine.id);
+assert.deepEqual(await (await call("heartbeat", { lease: restored.lease }, fifth)).json(), { ready: false, restoring: true });
+assert.equal((await upload(fifth, restored.lease)).status, 409);
+assert.equal((await call("restart", { lease: restored.lease }, fifth)).status, 409);
+const activeMaintenance = await pendingPC.parkIdle();
+assert.equal(activeMaintenance.active, true);
+resumeState = "Succeeded";
+assert.equal((await (await call("heartbeat", { lease: restored.lease }, fifth)).json()).ready, true);
+assert.equal(await pendingPC.ctx.storage.get("savedVM"), undefined);
+assert.equal((await call("parkIdle", {}, fifth)).status, 404);
 console.log("PC checks passed: account/session isolation, capacity, provisioning, power, uploads, confirmed deletion, cleanup retries, retired inventory and one replacement per account.");
 
 // Exercise the real Azure resource-selection and delete polling code with recorded cloud responses.
 let azureReplies = [], azureCalls = [];
 globalThis.pcTestAzureRequest = async (_env, resource, options = {}) => {
-  azureCalls.push({ resource, method: options.method || "GET" });
+  azureCalls.push({ resource, method: options.method || "GET", body: options.body && JSON.parse(options.body) });
   assert.ok(azureReplies.length, "Unexpected Azure request");
   const [status, body = {}] = azureReplies.shift();
   return Response.json(body, { status });
@@ -314,3 +352,30 @@ assert.equal(await cleanup.deleteResource(env, resources[1]), false);
 azureReplies = [[403]];
 await assert.rejects(cleanup.deleteResource(env, resources[1]), /Could not check/);
 console.log("Azure deletion checks passed: exact resource scope, legacy and partial deployments, persisted disk IDs, 202/404 confirmation and retryable conflicts.");
+
+const savedInfo = { location: "mexicocentral", properties: {
+  hardwareProfile: { vmSize: "Standard_B2as_v2" }, licenseType: "Windows_Client",
+  osProfile: { adminPassword: "must-not-be-saved" },
+  storageProfile: { imageReference: { version: "latest" }, osDisk: { name: currentDisk.split("/").pop(), osType: "Windows", createOption: "FromImage", managedDisk: { id: currentDisk }, deleteOption: "Delete" }, dataDisks: [] },
+  networkProfile: { networkInterfaces: [{ id: current.resourceId.replace("Microsoft.Compute/virtualMachines", "Microsoft.Network/networkInterfaces") + "-nic" }] },
+} };
+azureCalls = []; azureReplies = [[200, savedInfo], [200, savedInfo], [202]];
+assert.equal(await cleanup.saveMachine(env, current), null);
+assert.equal(azureCalls.at(-1).body.properties.storageProfile.osDisk.deleteOption, "Detach");
+assert.equal(azureCalls.some(call => call.method === "DELETE"), false);
+savedInfo.properties.storageProfile.osDisk.deleteOption = "Detach";
+savedInfo.properties.networkProfile.networkInterfaces[0].properties = { deleteOption: "Detach" };
+azureReplies = [[200, savedInfo], [200, savedInfo]];
+const savedVM = await cleanup.saveMachine(env, current);
+assert.equal(savedVM.properties.storageProfile.osDisk.createOption, "Attach");
+assert.equal(savedVM.properties.storageProfile.osDisk.managedDisk.id, currentDisk);
+assert.equal(savedVM.properties.osProfile, undefined);
+assert.equal(savedVM.properties.storageProfile.imageReference, undefined);
+azureReplies = [[404]];
+await assert.rejects(cleanup.restoreMachine(env, current, savedVM), /will not be replaced/);
+azureReplies = [[200, { managedBy: "other-pc" }]];
+await assert.rejects(cleanup.restoreMachine(env, current, savedVM), /another PC/);
+azureReplies = [[200], [202]];
+await cleanup.restoreMachine(env, current, savedVM);
+assert.equal(azureCalls.at(-1).body.properties.storageProfile.osDisk.managedDisk.id, currentDisk);
+console.log("Saved-PC checks passed: detach protection, VM-only removal/retries, same disk and account on restore, no fresh installer, missing/foreign disk rejected.");

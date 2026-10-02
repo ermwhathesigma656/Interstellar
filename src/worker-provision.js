@@ -118,3 +118,52 @@ export async function deleteResource(env, resource) {
   // Accepted is not finished: retain ownership until a later GET confirms absence.
   return false;
 }
+
+// Keep the specialized OS disk: restoring must never run the fresh-Windows installer.
+export async function saveMachine(env, machine) {
+  await deletionResources(env, machine); // Validate this account's resource boundaries.
+  const response = await azureRequest(env, `${machine.resourceId}?api-version=2024-07-01`);
+  if (!response.ok) throw new Error("Could not save PC configuration");
+  const vm = await response.json(), p = vm.properties;
+  const disks = [p.storageProfile.osDisk, ...(p.storageProfile.dataDisks || [])];
+  const interfaces = p.networkProfile.networkInterfaces;
+  if (disks.some(disk => !disk.managedDisk?.id || disk.diffDiskSettings)) throw new Error("PC requires a persistent managed disk");
+  if (disks.some(disk => disk.deleteOption !== "Detach") || interfaces.some(nic => nic.properties?.deleteOption !== "Detach")) {
+    const patch = await azureRequest(env, `${machine.resourceId}?api-version=2024-07-01`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ properties: {
+        storageProfile: { osDisk: { deleteOption: "Detach" }, dataDisks: (p.storageProfile.dataDisks || []).map(disk => ({ ...disk, deleteOption: "Detach" })) },
+        networkProfile: { networkInterfaces: interfaces.map(nic => ({ id: nic.id, properties: { ...nic.properties, deleteOption: "Detach" } })) },
+      } }),
+    });
+    if (!patch.ok) throw new Error("Could not protect saved PC resources");
+    return null; // Confirm the protection on the next alarm before deleting anything.
+  }
+  const attach = disk => ({ name: disk.name, lun: disk.lun, osType: disk.osType, caching: disk.caching,
+    createOption: "Attach", managedDisk: { id: disk.managedDisk.id }, deleteOption: "Detach" });
+  return { location: vm.location, tags: vm.tags, zones: vm.zones, properties: {
+    hardwareProfile: p.hardwareProfile, licenseType: p.licenseType, securityProfile: p.securityProfile,
+    storageProfile: { diskControllerType: p.storageProfile.diskControllerType, osDisk: attach(disks[0]), dataDisks: disks.slice(1).map(attach) },
+    networkProfile: { networkInterfaces: interfaces.map(nic => ({ id: nic.id, properties: nic.properties })) },
+    diagnosticsProfile: p.diagnosticsProfile,
+  } };
+}
+
+export async function restoreMachine(env, machine, saved) {
+  for (const disk of [saved.properties.storageProfile.osDisk, ...saved.properties.storageProfile.dataDisks]) {
+    const response = await azureRequest(env, `${disk.managedDisk.id}?api-version=2024-03-02`);
+    if (!response.ok) throw new Error("Your saved disk is unavailable; it will not be replaced");
+    const info = await response.json();
+    if (info.managedBy && info.managedBy.toLowerCase() !== machine.resourceId.toLowerCase()) throw new Error("Saved disk is attached to another PC");
+  }
+  const response = await azureRequest(env, `${machine.resourceId}?api-version=2024-07-01`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(saved),
+  });
+  if (!response.ok) throw new Error("Azure could not restore your saved PC");
+}
+
+export async function machineState(env, machine) {
+  const response = await azureRequest(env, `${machine.resourceId}?api-version=2024-07-01`);
+  if (response.status === 404) return "Missing";
+  if (!response.ok) throw new Error("Could not check saved PC restoration");
+  return (await response.json()).properties.provisioningState;
+}

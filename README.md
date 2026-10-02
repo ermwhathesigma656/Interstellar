@@ -65,7 +65,7 @@ may need updating if OpenAI retires it.
 
 The **PC** tab connects to a real Windows 10 Azure VM using noVNC. Each account
 automatically claims one available VM on its first start. When automatic provisioning
-is configured, it creates a VM if none is available, up to the owner's total PC cap.
+is configured, it creates a VM if none is available, up to the owner's saved-PC cap.
 Each account owns one PC at a time; repeated starts never create another.
 **Delete my PC** asks for confirmation before permanently erasing its files, apps,
 and settings. The account remains, and can create a fresh PC after cleanup finishes.
@@ -79,8 +79,12 @@ within the same resource group; resource-group deletion is not required.
 `VirtualPC` Durable Objects serialize
 session ownership: only one tab/device can control an account's PC. Closing the
 tab releases it; lost connections expire after three minutes. Durable Object alarms
-retry Azure deallocation until confirmed, and start requests wait for shutdown
-to finish. Windows files persist on the OS disk; save documents before leaving,
+retry Azure deallocation until confirmed, protect the disk and network resources with
+`Detach`, save a restoration descriptor, and remove only the VM resource. Start
+requests wait for cleanup to finish, then recreate the VM using the exact same
+specialized Windows disk; the fresh-install script is never rerun on restoration.
+Missing disks cause an error rather than a replacement Windows installation.
+Windows files, installed apps and settings persist on the OS disk; save documents before leaving,
 because running applications and unsaved work do not survive shutdown.
 
 The Worker uses an Azure user-assigned managed identity with federated trust in
@@ -100,14 +104,15 @@ deallocated. Keep the Azure Students spending limit enabled. This is not an
 unlimited free VM service. Run `npm run test:pc` for isolation and lifecycle checks.
 
 For automatic creation, put `resourceGroup` (full Azure resource ID), `location`,
-`maxPCs` (the total account/PC cap), and `sourceRoot` (an immutable Git commit's
+`maxPCs` (the total saved account/PC cap, including idle disks), and `sourceRoot` (an immutable Git commit's
 HTTPS scripts directory) in `.wrangler/pc-provisioning.json` before running the
 configuration script. `location` is the region for new PCs; existing PCs keep their
 original region, including deployment retries. Validate the VM size and regional
 quota before changing it or raising the total cap. The deployment uses secure parameters for Windows passwords
 and gateway credentials, creates a separate network per PC, installs the gateway,
-and restarts Windows after the extension completes. A closed session is deallocated
-after any in-progress deployment finishes. Existing Windows image activation is
+and signs in automatically on first boot. A closed session is cleaned up after any
+in-progress deployment finishes. Retaining disks still uses storage credits, and Azure's
+regional VM quota independently limits concurrent restores. Existing Windows image activation is
 preserved; website users never enter a Windows key or a PC assignment code.
 
 The desktop reconnects automatically after an interrupted connection. Its toolbar
