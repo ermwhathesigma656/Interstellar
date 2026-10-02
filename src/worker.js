@@ -10,6 +10,7 @@ import { proxyHTTP } from "./worker-http.js";
 import { chat } from "./worker-ai.js";
 import { pcApi } from "./worker-pc.js";
 import { pcIdentity } from "./worker-azure.js";
+import { routeHost } from "./worker-hosts.js";
 export { DiscordAssets } from "./discord-assets.js";
 export { VirtualPC } from "./worker-pc.js";
 
@@ -115,13 +116,8 @@ export default {
       });
     }
     const url = new URL(request.url);
-    // Git-connected copies keep their own assets but share the original accounts and secrets.
-    if (url.hostname === "schoolwork.gonicvrnew.workers.dev" && (url.pathname.startsWith("/api/pc/") || url.pathname === "/api/ai/chat")) {
-      const headers = new Headers(request.headers);
-      if (headers.get("Origin") === url.origin) headers.set("Origin", "https://interstellar.gonicvrnew.workers.dev");
-      url.hostname = "interstellar.gonicvrnew.workers.dev";
-      return env.PC_BACKEND.fetch(new Request(new Request(url, request), { headers }));
-    }
+    const hosted = routeHost(request, env);
+    if (hosted) return hosted;
     if (url.pathname === "/api/ai/chat") return chat(request, env);
     if (url.pathname.startsWith("/api/pc/")) return pcApi(request, env);
     if (["/.well-known/openid-configuration", "/pc-jwks.json"].includes(url.pathname)) return pcIdentity(url.pathname, env);
