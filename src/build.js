@@ -574,10 +574,11 @@ const INLINE_HANDLER_FUNCS = {
   "settings.js": ["toggleAB", "changeEngine", "saveEventKey", "exportSaveData", "importSaveData", "AB"],
   "search.js": ["go"],
   "launcher.js": ["go"],
+  "ports.js": ["go"],
 };
 const INLINE_HANDLER_ATTR = /(\son(?:keyup|change|click)\s*=\s*")([A-Za-z_$][\w$]*)(\s*\()/gi;
-// window.bar/category (2) + tabs.js funcs (9) + settings.js funcs (7) + search go (1) + launcher go (1).
-const INLINE_HANDLER_JS_COUNT = 20;
+// window.bar/category (2) + tabs.js funcs (9) + settings.js funcs (7) + search/launcher/ports go (3).
+const INLINE_HANDLER_JS_COUNT = 21;
 // onkeyup/onchange (6) + onclick: tabs (7) + settings (4) + 404 go (1).
 const INLINE_HANDLER_HTML_COUNT = 18;
 
@@ -688,7 +689,7 @@ function applyProxyChoiceValues(source) {
 // server, and rewrites the clean route literals in the application JS so the navbar and every
 // in-app navigation point at the same opaque paths. "/" (root) and "/play.html" (a compatibility
 // alias for the games page) are deliberately left clean and are not part of this map.
-const PAGE_ROUTES = ["/apps", "/games", "/tabs", "/settings", "/ai", "/pc"];
+const PAGE_ROUTES = ["/apps", "/games", "/ports", "/tabs", "/settings", "/ai", "/pc"];
 
 function createPageRoutes(registry) {
   const map = {};
@@ -712,6 +713,7 @@ function createPageRoutes(registry) {
 function routeRewriteTable(routes) {
   return [
     [`"/./games"`, `"${routes["/games"]}"`],
+    [`"/./ports"`, `"${routes["/ports"]}"`],
     [`"/./apps"`, `"${routes["/apps"]}"`],
     [`"/./settings"`, `"${routes["/settings"]}"`],
     [`"/./ai"`, `"${routes["/ai"]}"`],
@@ -722,7 +724,7 @@ function routeRewriteTable(routes) {
     [`"tabs"`, `"${routes["/tabs"]}"`],
   ];
 }
-const ROUTE_REWRITE_COUNT = 13;
+const ROUTE_REWRITE_COUNT = 14;
 
 function applyRouteRewrites(source, table) {
   let count = 0;
