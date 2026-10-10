@@ -112,7 +112,6 @@ const routes = [
   { path: "/ai", file: "ai.html" },
   { path: "/pc", file: "pc.html" },
   { path: "/games", file: "games.html" },
-  { path: "/ports", file: "ports.html" },
   { path: "/play.html", file: "games.html" },
   { path: "/settings", file: "settings.html" },
   { path: "/tabs", file: "tabs.html" },
