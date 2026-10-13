@@ -1,4 +1,4 @@
-const isGamesPage = window.location.pathname === "/games";
+const isGamesPage = window.location.pathname === "/games" || /^\/(?:games(?:\.html)?|play\.html)$/.test(window.location.pathname);
 const isAppsPage = window.location.pathname === "/apps";
 
 function getStorageKey(baseKey) {

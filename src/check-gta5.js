@@ -9,6 +9,12 @@ const game = games.find(entry => entry.name === "GTA V");
 assert.ok(game);
 await readFile(`static${game.image}`);
 const launcher = await readFile("static/assets/js/launcher.js", "utf8");
+// Production rewrites the canonical route; clean links and the player's Back button still work.
+for (const pathname of ["/games", "/games.html", "/play.html", "/opaque-games"]) {
+  const context = vm.createContext({ window: { location: { pathname } }, document: { addEventListener() {} } });
+  vm.runInContext(launcher.replace('=== "/games"', '=== "/opaque-games"'), context);
+  assert.equal(context.getJsonPath(), "/assets/json/games.min.json", `Game catalog at ${pathname}`);
+}
 for (const isInTabMode of [false, true]) {
   const window = { location: { pathname: "/games" }, top: { location: {} } };
   let proxyUrl;
