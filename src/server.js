@@ -11,6 +11,7 @@ import rateLimit from "express-rate-limit";
 import config from "../config.js";
 import { mountAnalytics } from "./analytics.js";
 import { mountGhGames } from "./games.js";
+import { gta5Page } from "./gta5.js";
 import { injectVersionInfo, resolveVersionInfo } from "./version.js";
 
 console.log(chalk.yellow("🚀 Starting server..."));
@@ -56,6 +57,11 @@ if (config.challenge !== false) {
 }
 
 mountGhGames(app);
+
+app.get("/play/gta5", generalLimiter, async (_req, res) => {
+  const page = gta5Page();
+  res.set(Object.fromEntries(page.headers)).send(await page.text());
+});
 
 app.use(cookieParser());
 app.use(express.json());

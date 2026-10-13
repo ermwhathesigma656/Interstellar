@@ -43,7 +43,10 @@ function handleAppClick(app) {
   const proxy = app.proxy;
 
   // isInTabMode is declared in main.js
-  if (app.local) {
+  if (app.isolated) {
+    // Shared-memory games need their own top-level page, including from an in-app tab.
+    window.top.location.href = selectedUrl;
+  } else if (app.local) {
     saveUrlToSession(selectedUrl);
     window.location.href = isInTabMode ? selectedUrl : "tabs";
   } else if (app.local2) {

@@ -11,6 +11,7 @@ import { chat } from "./worker-ai.js";
 import { pcApi } from "./worker-pc.js";
 import { pcIdentity } from "./worker-azure.js";
 import { routeHost } from "./worker-hosts.js";
+import { gta5Page } from "./gta5.js";
 export { DiscordAssets } from "./discord-assets.js";
 export { VirtualPC } from "./worker-pc.js";
 
@@ -118,6 +119,7 @@ export default {
     const url = new URL(request.url);
     const hosted = routeHost(request, env);
     if (hosted) return hosted;
+    if (url.pathname === "/play/gta5") return gta5Page();
     if (url.pathname === "/api/ai/chat") return chat(request, env);
     if (url.pathname.startsWith("/api/pc/")) return pcApi(request, env);
     if (["/.well-known/openid-configuration", "/pc-jwks.json"].includes(url.pathname)) return pcIdentity(url.pathname, env);
